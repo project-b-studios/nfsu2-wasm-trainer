@@ -402,18 +402,37 @@
           const mass = massOf(u, f32, c);
           const v = vecAt(f32, rb, 0xA0);
           const sideSpeed = dot(v, side);
-          if (Math.abs(sideSpeed) < 14) {
-            const push = Math.min((14 - Math.abs(sideSpeed)) * 0.12, 1.2) * (sideSpeed >= 0 ? 1 : -1);
-            for (let i = 0; i < 3; i++) {
-              f32[(rb + 0xA0 + 4 * i) >> 2] = v[i] + side[i] * push;
-              f32[(rb + 0x70 + 4 * i) >> 2] += side[i] * push * mass;
-              f32[(c + 0x70 + 4 * i) >> 2] = f32[(rb + 0xA0 + 4 * i) >> 2];
-            }
+          const fwdSpeed = dot(v, dir);
+          const next = [v[0], v[1], v[2]];
+
+          // scrub forward speed so the donut stays tight
+          if (fwdSpeed > 7) {
+            const scrub = (fwdSpeed - 7) * 0.16;
+            for (let i = 0; i < 3; i++) next[i] -= dir[i] * scrub;
           }
-          const ang = 0.06;
+
+          // lower lateral target -> much smaller radius
+          const targetSide = 6.5;
+          let push = 0;
+          if (Math.abs(sideSpeed) < targetSide) {
+            push = Math.min((targetSide - Math.abs(sideSpeed)) * 0.18, 1.2) * (sideSpeed >= 0 ? 1 : -1);
+            for (let i = 0; i < 3; i++) next[i] += side[i] * push;
+          }
+
+          for (let i = 0; i < 3; i++) {
+            f32[(rb + 0xA0 + 4 * i) >> 2] = next[i];
+            f32[(rb + 0x70 + 4 * i) >> 2] += side[i] * push * mass;
+            f32[(c + 0x70 + 4 * i) >> 2] = next[i];
+          }
+
+          const ang = 0.1;
           for (const off of [0x90, 0xA0, 0xB0]) putVec(f32, c, off, rot(vecAt(f32, c, off), w, ang));
-          if (rb) putVec(f32, rb, 0xA0, rot(vecAt(f32, rb, 0xA0), w, ang));
+          putVec(f32, rb, 0xA0, rot(vecAt(f32, rb, 0xA0), w, ang));
           putVec(f32, c, 0x70, rot(vecAt(f32, c, 0x70), w, ang));
+
+          const ns = speedOf(u, f32, c);
+          f32[(c + 0x42C) >> 2] = ns;
+          f32[(c + 0x430) >> 2] = ns;
         }
       }
 

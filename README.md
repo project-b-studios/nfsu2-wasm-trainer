@@ -26,7 +26,7 @@
 - **Jump Mechanic:** Upward velocity vector application for obstacle clearance, with adjustable jump power (6 - 60).
 - **Chaos Mode:** Random impulses and spins — good for clips, terrible for lap times.
 - **Low Gravity:** Softens falls and keeps the car in the air longer.
-- **Spin:** Rotates the car mid-air (or mid-road, no judgement).
+- **Spin:** Tight donut spin with a small radius - scrubs forward speed so it stays in a circle instead of sliding wide.
 - **On-Screen Panel:** Clickable buttons and sliders for every feature — works on touch devices too, no keyboard needed.
 - **Live Speedometer:** Real-time km/h readout with active mode indicators.
 - **Controller & Keyboard Support:** Dual input handling for standard keyboard layouts and XInput-compatible Gamepads.
@@ -112,4 +112,5 @@ Distributed under the MIT License. See `LICENSE` for details.
 
 ## Credits
 - Background Music: Music by [Marco Conti](https://pixabay.com/users/velariomusic-54515099/) from [Pixabay](https://pixabay.com/music/)
+
 
