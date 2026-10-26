@@ -19,6 +19,10 @@
   let savedPos = null, loadState = null, loadUntil = 0, saveScan = null;
   let upAvg = null;
 
+  let chaosOn = false, gravOn = false, spinOn = false;
+  let jumpPower = 8, panelOn = false, teleOn = true;
+  let chaosNext = 0, paintAt = 0;
+
   const HELP_TEXT = [
     "NOS CONTROLS",
     "",
@@ -31,6 +35,13 @@
     "  6  load position",
     "  7  boost power -50 km/h",
     "  8  boost power +50 km/h",
+    "  [  jump power -",
+    "  ]  jump power +",
+    "  C  chaos mode on/off",
+    "  G  low gravity on/off",
+    "  V  spin on/off",
+    "  H  show/hide on-screen panel",
+    "  T  show/hide speedometer",
     "  0  show/hide this help",
     "  hold Alt  keep NOS active",
     "",
@@ -38,6 +49,9 @@
     "  LB  boost on/off",
     "  RB  jump",
     "  A   stop lock on/off",
+    "  B   chaos mode",
+    "  X   low gravity",
+    "  Y   spin",
     "  D-pad left/right  save/load position",
     "  D-pad up/down     boost power +/-50 km/h"
   ].join("\n");
@@ -90,6 +104,14 @@
   let helpOn = false;
   let hudTimer = 0;
 
+  const tele = mkBox(0);
+  tele.style.top = "auto";
+  tele.style.bottom = "8px";
+  tele.style.left = "8px";
+  tele.style.color = "#3cf";
+  tele.style.font = "bold 18px monospace";
+  tele.textContent = "waiting for car";
+
   const toast = msg => {
     console.log("[NOS] " + msg);
     hud.textContent = msg;
@@ -100,7 +122,9 @@
 
   const refit = () => {
     if (hud.style.display === "block") place(hud);
+    if (teleOn) place(tele);
     if (helpOn) place(help);
+    if (panelOn) place(panel);
   };
   listen("fullscreenchange", refit);
   listen("webkitfullscreenchange", refit);
@@ -159,6 +183,25 @@
     const v = [0, 0, 0];
     v[i] = upAvg[i] >= 0 ? 1 : -1;
     return v;
+  };
+
+  const rot = (v, w, a) => {
+    const c = Math.cos(a), s = Math.sin(a), d = dot(v, w);
+    const x = w[1] * v[2] - w[2] * v[1];
+    const y = w[2] * v[0] - w[0] * v[2];
+    const z = w[0] * v[1] - w[1] * v[0];
+    return [
+      v[0] * c + x * s + w[0] * d * (1 - c),
+      v[1] * c + y * s + w[1] * d * (1 - c),
+      v[2] * c + z * s + w[2] * d * (1 - c)
+    ];
+  };
+
+  const vecAt = (f32, base, off) => [f32[(base + off) >> 2], f32[(base + off + 4) >> 2], f32[(base + off + 8) >> 2]];
+  const putVec = (f32, base, off, v) => {
+    f32[(base + off) >> 2] = v[0];
+    f32[(base + off + 4) >> 2] = v[1];
+    f32[(base + off + 8) >> 2] = v[2];
   };
 
   const hspeedOf = (u, f32, c) => Math.hypot(...horiz(velOf(u, f32, c), wUpVec()));
@@ -225,7 +268,7 @@
     let ux = f32[(c + 0xB0) >> 2], uy = f32[(c + 0xB4) >> 2], uz = f32[(c + 0xB8) >> 2];
     const len = Math.hypot(ux, uy, uz) || 1;
     ux /= len; uy /= len; uz /= len;
-    const j = 8;
+    const j = jumpPower;
     f32[(rb + 0xA0) >> 2] += ux * j;
     f32[(rb + 0xA4) >> 2] += uy * j;
     f32[(rb + 0xA8) >> 2] += uz * j;
@@ -327,6 +370,55 @@
       f32[(c + 0x430) >> 2] = ns;
     }
 
+    {
+      const w = wUpVec();
+      const rb = rbOf(u, c);
+
+      if (gravOn) {
+        for (const [base, off] of [[c, 0x70], [rb, 0xA0]]) {
+          if (!base) continue;
+          const v = vecAt(f32, base, off);
+          const vy = dot(v, w);
+          if (vy < -1.5) {
+            const d = -vy * 0.85;
+            putVec(f32, base, off, [v[0] + w[0] * d, v[1] + w[1] * d, v[2] + w[2] * d]);
+          }
+        }
+        const ns = speedOf(u, f32, c);
+        f32[(c + 0x42C) >> 2] = ns;
+        f32[(c + 0x430) >> 2] = ns;
+      }
+
+      if (spinOn || chaosOn) {
+        const ang = (spinOn ? 0.045 : 0) + (chaosOn ? (Math.random() - 0.5) * 0.1 : 0);
+        if (ang) {
+          for (const off of [0x90, 0xA0, 0xB0]) putVec(f32, c, off, rot(vecAt(f32, c, off), w, ang));
+          if (rb) putVec(f32, rb, 0xA0, rot(vecAt(f32, rb, 0xA0), w, ang));
+          putVec(f32, c, 0x70, rot(vecAt(f32, c, 0x70), w, ang));
+        }
+      }
+
+      if (chaosOn && performance.now() >= chaosNext) {
+        chaosNext = performance.now() + 250 + Math.random() * 450;
+        const t = Math.abs(w[0]) > Math.abs(w[2]) ? [w[1], -w[0], 0] : [0, -w[2], w[1]];
+        const tl = Math.hypot(t[0], t[1], t[2]) || 1;
+        const kick = 5 + Math.random() * 10, lift = 2 + Math.random() * 5;
+        const dir = [t[0] / tl, t[1] / tl, t[2] / tl];
+        for (const [base, off] of [[c, 0x70], [rb, 0xA0]]) {
+          if (!base) continue;
+          const v = vecAt(f32, base, off);
+          putVec(f32, base, off, [
+            v[0] + dir[0] * kick + w[0] * lift,
+            v[1] + dir[1] * kick + w[1] * lift,
+            v[2] + dir[2] * kick + w[2] * lift
+          ]);
+        }
+        const cs = speedOf(u, f32, c);
+        f32[(c + 0x42C) >> 2] = cs;
+        f32[(c + 0x430) >> 2] = cs;
+      }
+    }
+
     if (loadState) {
       if (performance.now() < loadUntil) {
         writeSlots(u, f32, c, loadState);
@@ -369,6 +461,8 @@
       slots: savedPos && savedPos.slots ? savedPos.slots.length : 0,
       locked
     };
+
+    paint(performance.now());
   }, 8);
 
   const act = name => {
@@ -383,6 +477,38 @@
       const d = name === "powerUp" ? BOOST_STEP : -BOOST_STEP;
       boostKmh = Math.max(BOOST_MIN, Math.min(BOOST_MAX, boostKmh + d));
       toast("Boost power: +" + boostKmh + " km/h");
+      paint(performance.now(), true);
+      return;
+    }
+
+    if (name === "jumpUp" || name === "jumpDown") {
+      jumpPower = Math.max(6, Math.min(60, jumpPower + (name === "jumpUp" ? 4 : -4)));
+      toast("Jump power: " + jumpPower);
+      paint(performance.now(), true);
+      return;
+    }
+
+    if (name === "chaos" || name === "grav" || name === "spin") {
+      const label = name === "chaos" ? "Chaos" : name === "grav" ? "Low gravity" : "Spin";
+      let on;
+      if (name === "chaos") { chaosOn = !chaosOn; on = chaosOn; }
+      else if (name === "grav") { gravOn = !gravOn; on = gravOn; }
+      else { spinOn = !spinOn; on = spinOn; }
+      toast(label + (on ? " ON" : " OFF"));
+      paint(performance.now(), true);
+      return;
+    }
+
+    if (name === "panel") {
+      panelOn = !panelOn;
+      if (panelOn) show(panel); else hide(panel);
+      paint(performance.now(), true);
+      return;
+    }
+
+    if (name === "tele") {
+      teleOn = !teleOn;
+      if (teleOn) show(tele); else hide(tele);
       return;
     }
 
@@ -436,6 +562,123 @@
     }
   };
 
+  const panel = mkBox(0);
+  panel.style.top = "auto";
+  panel.style.right = "10px";
+  panel.style.bottom = "10px";
+  panel.style.left = "auto";
+  panel.style.padding = "8px";
+  panel.style.color = "#0f0";
+  panel.style.background = "rgba(0,0,0,.78)";
+  panel.style.border = "1px solid #0f0";
+  panel.style.borderRadius = "8px";
+  panel.style.font = "bold 11px monospace";
+  panel.style.pointerEvents = "auto";
+  panel.style.width = "196px";
+
+  const panelTitle = document.createElement("div");
+  panelTitle.textContent = "NFSU2 TRAINER v1.1";
+  panelTitle.style.cssText = "text-align:center;letter-spacing:1px;margin-bottom:6px;color:#0f0";
+  panel.appendChild(panelTitle);
+
+  const grid = document.createElement("div");
+  grid.style.cssText = "display:flex;flex-wrap:wrap;gap:4px";
+  panel.appendChild(grid);
+
+  const pbtn = {};
+  const mkBtn = (label, action) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.style.cssText = "flex:1 1 30%;padding:6px 2px;background:#111;color:#0f0;border:1px solid #555;border-radius:4px;font:bold 10px monospace;cursor:pointer";
+    b.addEventListener("click", ev => { ev.preventDefault(); act(action); b.blur(); });
+    grid.appendChild(b);
+    pbtn[action] = b;
+  };
+  [
+    ["NOS", "boost"], ["JUMP", "jump"], ["STOP", "stop"],
+    ["LOCK", "lock"], ["SAVE", "savePos"], ["LOAD", "loadPos"],
+    ["CHAOS", "chaos"], ["LOW-G", "grav"], ["SPIN", "spin"], ["HELP", "help"]
+  ].forEach(([l, a]) => mkBtn(l, a));
+
+  const mkSlider = (min, max, step, value, format, onInput) => {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "margin-top:8px";
+    const lab = document.createElement("div");
+    lab.style.cssText = "margin-bottom:2px;color:#8f8";
+    lab.textContent = format(value);
+    wrap.appendChild(lab);
+    const r = document.createElement("input");
+    r.type = "range";
+    r.min = min;
+    r.max = max;
+    r.step = step;
+    r.value = value;
+    r.style.cssText = "width:100%;accent-color:#0f0";
+    r.addEventListener("input", () => {
+      const v = +r.value;
+      lab.textContent = format(v);
+      onInput(v);
+    });
+    wrap.appendChild(r);
+    panel.appendChild(wrap);
+    return { r, lab, format };
+  };
+
+  const boostS = mkSlider(BOOST_MIN, BOOST_MAX, BOOST_STEP, boostKmh,
+    v => "NOS power: +" + v + " km/h", v => { boostKmh = v; });
+  const jumpS = mkSlider(6, 60, 4, jumpPower,
+    v => "Jump power: " + v, v => { jumpPower = v; });
+
+  const hint = document.createElement("div");
+  hint.textContent = "H hides the panel";
+  hint.style.cssText = "margin-top:8px;text-align:center;color:#666;font-size:9px";
+  panel.appendChild(hint);
+
+  const paint = (now, force) => {
+    if (!force && now < paintAt) return;
+    paintAt = now + 120;
+
+    if (teleOn) {
+      const g = get();
+      if (g) {
+        const tags = [];
+        if (boostOn) tags.push("NOS");
+        if (chaosOn) tags.push("CHAOS");
+        if (gravOn) tags.push("LOW-G");
+        if (spinOn) tags.push("SPIN");
+        if (locked) tags.push("LOCK");
+        tele.textContent = Math.round(hspeedOf(g.u, g.f32, g.c) * 3.6) + " km/h" +
+          (tags.length ? "   " + tags.join(" ") : "");
+      } else {
+        tele.textContent = "waiting for car";
+      }
+    }
+
+    if (panelOn) {
+      const states = [
+        [pbtn.boost, boostOn], [pbtn.lock, locked],
+        [pbtn.chaos, chaosOn], [pbtn.grav, gravOn], [pbtn.spin, spinOn]
+      ];
+      for (const [el, on] of states) {
+        el.style.borderColor = on ? "#0f0" : "#555";
+        el.style.background = on ? "#063" : "#111";
+      }
+      if (document.activeElement !== boostS.r) {
+        boostS.r.value = boostKmh;
+        boostS.lab.textContent = boostS.format(boostKmh);
+      }
+      if (document.activeElement !== jumpS.r) {
+        jumpS.r.value = jumpPower;
+        jumpS.lab.textContent = jumpS.format(jumpPower);
+      }
+    }
+  };
+
+  panelOn = true;
+  teleOn = true;
+  show(panel);
+  show(tele);
+
   const KEYS = {
     0: "help",
     1: "boost", 2: "jump", 3: "stop", 4: "lock",
@@ -445,6 +688,12 @@
   listen("keydown", e => {
     if (isAlt(e)) { held = true; e.preventDefault(); return; }
     if (e.repeat) return;
+    if (e.code === "BracketLeft" || e.key === "[" || e.key === ",") return act("jumpDown");
+    if (e.code === "BracketRight" || e.key === "]" || e.key === ".") return act("jumpUp");
+    if (e.key.length === 1) {
+      const l = { c: "chaos", g: "grav", v: "spin", h: "panel", t: "tele" }[e.key.toLowerCase()];
+      if (l) return act(l);
+    }
     for (const k in KEYS) {
       if (e.key === k || e.code === "Digit" + k || e.code === "Numpad" + k) return act(KEYS[k]);
     }
@@ -471,7 +720,7 @@
   });
 
   const PAD_MAP = {
-    4: "boost", 5: "jump", 0: "lock",
+    4: "boost", 5: "jump", 0: "lock", 1: "chaos", 2: "grav", 3: "spin",
     12: "powerUp", 13: "powerDown", 14: "savePos", 15: "loadPos"
   };
   const padPrev = {};
@@ -524,9 +773,11 @@
       offs.forEach(fn => fn());
       hud.remove();
       help.remove();
+      panel.remove();
+      tele.remove();
       delete window.__nosCheat;
       console.log("[NOS] stopped");
     }
   };
-  console.log("[NOS] running (press 0 for controls)");
+  console.log("[NOS] running v1.1 (press H for the panel, 0 for controls)");
 })();
