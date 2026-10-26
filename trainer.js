@@ -421,23 +421,31 @@
         chaosNext = performance.now() + 300 + Math.random() * 400;
         const t = Math.abs(w[0]) > Math.abs(w[2]) ? [w[1], -w[0], 0] : [0, -w[2], w[1]];
         const tl = Math.hypot(t[0], t[1], t[2]) || 1;
-        const kick = 10 + Math.random() * 15, lift = 4 + Math.random() * 6;
         const dir = [t[0] / tl, t[1] / tl, t[2] / tl];
         const mass = massOf(u, f32, c);
+        const cur = speedOf(u, f32, c);
+        const stuck = cur < 2.5;
+        const kick = stuck ? 16 + Math.random() * 10 : 10 + Math.random() * 15;
+        const lift = stuck ? 11 + Math.random() * 5 : 4 + Math.random() * 6;
+        const kickVec = [
+          dir[0] * kick + w[0] * lift,
+          dir[1] * kick + w[1] * lift,
+          dir[2] * kick + w[2] * lift
+        ];
+
         for (const [base, off] of [[c, 0x70], [rb, 0xA0]]) {
           if (!base) continue;
           const v = vecAt(f32, base, off);
-          putVec(f32, base, off, [
-            v[0] + dir[0] * kick + w[0] * lift,
-            v[1] + dir[1] * kick + w[1] * lift,
-            v[2] + dir[2] * kick + w[2] * lift
-          ]);
+          putVec(f32, base, off, stuck
+            ? kickVec
+            : [v[0] + kickVec[0], v[1] + kickVec[1], v[2] + kickVec[2]]);
         }
         if (rb) {
           for (let i = 0; i < 3; i++) {
-            f32[(rb + 0x70 + 4 * i) >> 2] += (dir[i] * kick + w[i] * lift) * mass;
+            f32[(rb + 0x70 + 4 * i) >> 2] += kickVec[i] * mass;
           }
         }
+
         const cs = speedOf(u, f32, c);
         f32[(c + 0x42C) >> 2] = cs;
         f32[(c + 0x430) >> 2] = cs;
