@@ -47,11 +47,11 @@
 | **5** | Save Position |
 | **6** | Load Position |
 | **7 / 8** | Decrease / Increase Boost Power (-/+ 50 km/h) |
-| **[ / ]** | Decrease / Increase Jump Power |
-| **C** | Toggle Chaos Mode |
+| **, / .** or **PgUp / PgDn** | Decrease / Increase Jump Power |
+| **X** | Toggle Chaos Mode |
 | **G** | Toggle Low Gravity |
-| **V** | Toggle Spin |
-| **H** | Show / Hide On-Screen Panel |
+| **Z** | Toggle Spin |
+| **P** | Show / Hide On-Screen Panel |
 | **T** | Show / Hide Speedometer |
 | **0** | Show / Hide Help HUD |
 | **Alt (Hold)** | Keep NOS active |
@@ -71,7 +71,7 @@
 
 ### On-Screen Panel
 
-The clickable panel in the bottom-right corner has every action plus NOS/jump power sliders, so the trainer is fully usable on phones and tablets without a keyboard. Press **H** to hide or show it.
+The clickable panel in the bottom-right corner has every action plus NOS/jump power sliders, so the trainer is fully usable on phones and tablets without a keyboard. Press **P** to hide or show it.
 
 ---
 

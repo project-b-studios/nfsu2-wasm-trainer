@@ -35,12 +35,12 @@
     "  6  load position",
     "  7  boost power -50 km/h",
     "  8  boost power +50 km/h",
-    "  [  jump power -",
-    "  ]  jump power +",
-    "  C  chaos mode on/off",
+    "  , / .  jump power -/+",
+    "  PgUp/PgDn  jump power -/+",
+    "  X  chaos mode on/off",
     "  G  low gravity on/off",
-    "  V  spin on/off",
-    "  H  show/hide on-screen panel",
+    "  Z  spin on/off",
+    "  P  show/hide on-screen panel",
     "  T  show/hide speedometer",
     "  0  show/hide this help",
     "  hold Alt  keep NOS active",
@@ -261,14 +261,14 @@
     }
   };
 
-  const jump = (u, f32, c) => {
+  const jump = (u, f32, c, power) => {
     const rb = rbOf(u, c);
     if (!rb) return console.log("[NOS] no rb");
     const mass = massOf(u, f32, c);
     let ux = f32[(c + 0xB0) >> 2], uy = f32[(c + 0xB4) >> 2], uz = f32[(c + 0xB8) >> 2];
     const len = Math.hypot(ux, uy, uz) || 1;
     ux /= len; uy /= len; uz /= len;
-    const j = jumpPower;
+    const j = power || jumpPower;
     f32[(rb + 0xA0) >> 2] += ux * j;
     f32[(rb + 0xA4) >> 2] += uy * j;
     f32[(rb + 0xA8) >> 2] += uz * j;
@@ -389,9 +389,28 @@
         f32[(c + 0x430) >> 2] = ns;
       }
 
-      if (spinOn || chaosOn) {
-        const ang = (spinOn ? 0.045 : 0) + (chaosOn ? (Math.random() - 0.5) * 0.1 : 0);
-        if (ang) {
+      if (spinOn) {
+        const hf = horiz(vecAt(f32, c, 0x90), w);
+        const hl = Math.hypot(hf[0], hf[1], hf[2]);
+        if (rb && hl > 0.2) {
+          const dir = [hf[0] / hl, hf[1] / hl, hf[2] / hl];
+          const side = [
+            w[1] * dir[2] - w[2] * dir[1],
+            w[2] * dir[0] - w[0] * dir[2],
+            w[0] * dir[1] - w[1] * dir[0]
+          ];
+          const mass = massOf(u, f32, c);
+          const v = vecAt(f32, rb, 0xA0);
+          const sideSpeed = dot(v, side);
+          if (Math.abs(sideSpeed) < 14) {
+            const push = Math.min((14 - Math.abs(sideSpeed)) * 0.12, 1.2) * (sideSpeed >= 0 ? 1 : -1);
+            for (let i = 0; i < 3; i++) {
+              f32[(rb + 0xA0 + 4 * i) >> 2] = v[i] + side[i] * push;
+              f32[(rb + 0x70 + 4 * i) >> 2] += side[i] * push * mass;
+              f32[(c + 0x70 + 4 * i) >> 2] = f32[(rb + 0xA0 + 4 * i) >> 2];
+            }
+          }
+          const ang = 0.06;
           for (const off of [0x90, 0xA0, 0xB0]) putVec(f32, c, off, rot(vecAt(f32, c, off), w, ang));
           if (rb) putVec(f32, rb, 0xA0, rot(vecAt(f32, rb, 0xA0), w, ang));
           putVec(f32, c, 0x70, rot(vecAt(f32, c, 0x70), w, ang));
@@ -399,11 +418,12 @@
       }
 
       if (chaosOn && performance.now() >= chaosNext) {
-        chaosNext = performance.now() + 250 + Math.random() * 450;
+        chaosNext = performance.now() + 300 + Math.random() * 400;
         const t = Math.abs(w[0]) > Math.abs(w[2]) ? [w[1], -w[0], 0] : [0, -w[2], w[1]];
         const tl = Math.hypot(t[0], t[1], t[2]) || 1;
-        const kick = 5 + Math.random() * 10, lift = 2 + Math.random() * 5;
+        const kick = 10 + Math.random() * 15, lift = 4 + Math.random() * 6;
         const dir = [t[0] / tl, t[1] / tl, t[2] / tl];
+        const mass = massOf(u, f32, c);
         for (const [base, off] of [[c, 0x70], [rb, 0xA0]]) {
           if (!base) continue;
           const v = vecAt(f32, base, off);
@@ -412,6 +432,11 @@
             v[1] + dir[1] * kick + w[1] * lift,
             v[2] + dir[2] * kick + w[2] * lift
           ]);
+        }
+        if (rb) {
+          for (let i = 0; i < 3; i++) {
+            f32[(rb + 0x70 + 4 * i) >> 2] += (dir[i] * kick + w[i] * lift) * mass;
+          }
         }
         const cs = speedOf(u, f32, c);
         f32[(c + 0x42C) >> 2] = cs;
@@ -493,7 +518,14 @@
       let on;
       if (name === "chaos") { chaosOn = !chaosOn; on = chaosOn; }
       else if (name === "grav") { gravOn = !gravOn; on = gravOn; }
-      else { spinOn = !spinOn; on = spinOn; }
+      else {
+        spinOn = !spinOn;
+        on = spinOn;
+        if (spinOn) {
+          const gg = get();
+          if (gg) jump(gg.u, gg.f32, gg.c, 5);
+        }
+      }
       toast(label + (on ? " ON" : " OFF"));
       paint(performance.now(), true);
       return;
@@ -630,7 +662,7 @@
     v => "Jump power: " + v, v => { jumpPower = v; });
 
   const hint = document.createElement("div");
-  hint.textContent = "H hides the panel";
+  hint.textContent = "P hides · , . jump power";
   hint.style.cssText = "margin-top:8px;text-align:center;color:#666;font-size:9px";
   panel.appendChild(hint);
 
@@ -688,10 +720,12 @@
   listen("keydown", e => {
     if (isAlt(e)) { held = true; e.preventDefault(); return; }
     if (e.repeat) return;
-    if (e.code === "BracketLeft" || e.key === "[" || e.key === ",") return act("jumpDown");
-    if (e.code === "BracketRight" || e.key === "]" || e.key === ".") return act("jumpUp");
+    if (e.code === "BracketLeft" || e.key === "[" || e.key === "," ||
+        e.key === "PageDown" || e.code === "NumpadSubtract" || e.key === "-") return act("jumpDown");
+    if (e.code === "BracketRight" || e.key === "]" || e.key === "." ||
+        e.key === "PageUp" || e.code === "NumpadAdd" || e.key === "+" || e.key === "=") return act("jumpUp");
     if (e.key.length === 1) {
-      const l = { c: "chaos", g: "grav", v: "spin", h: "panel", t: "tele" }[e.key.toLowerCase()];
+      const l = { x: "chaos", g: "grav", z: "spin", p: "panel", t: "tele" }[e.key.toLowerCase()];
       if (l) return act(l);
     }
     for (const k in KEYS) {
@@ -779,5 +813,5 @@
       console.log("[NOS] stopped");
     }
   };
-  console.log("[NOS] running v1.1 (press H for the panel, 0 for controls)");
+  console.log("[NOS] running v1.1 (press P for the panel, 0 for controls)");
 })();
