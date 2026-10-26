@@ -261,6 +261,27 @@
     }
   };
 
+  const captureSlots = (u, f32, c) => {
+    const found = new Map([
+      ["c:" + 0x60, { k: "c", off: 0x60, needle: "p" }],
+      ["c:" + 0x50, { k: "c", off: 0x50, needle: "com" }]
+    ]);
+    scanPos(u, f32, c, found);
+    return [...found.values()];
+  };
+
+  const chaosTeleport = (u, f32, c, dir) => {
+    const st = snap(f32, c);
+    st.slots = captureSlots(u, f32, c);
+    const d = 5 + Math.random() * 5;
+    for (const key of ["p", "com"]) {
+      st[key][0] += dir[0] * d;
+      st[key][1] += 0.6 + Math.random() * 0.8;
+      st[key][2] += dir[2] * d;
+    }
+    writeSlots(u, f32, c, st);
+  };
+
   const jump = (u, f32, c, power) => {
     const rb = rbOf(u, c);
     if (!rb) return console.log("[NOS] no rb");
@@ -437,17 +458,40 @@
       }
 
       if (chaosOn && performance.now() >= chaosNext) {
-        chaosNext = performance.now() + 200 + Math.random() * 350;
-        const t = Math.abs(w[0]) > Math.abs(w[2]) ? [w[1], -w[0], 0] : [0, -w[2], w[1]];
-        const tl = Math.hypot(t[0], t[1], t[2]) || 1;
-        const dir = [t[0] / tl, t[1] / tl, t[2] / tl];
+        chaosNext = performance.now() + 250 + Math.random() * 350;
         const mass = massOf(u, f32, c);
         const cur = speedOf(u, f32, c);
-        const stuck = cur < 6;
-        const kick = stuck ? 26 + Math.random() * 16 : 16 + Math.random() * 18;
-        const lift = stuck ? 20 + Math.random() * 12 : 10 + Math.random() * 10;
+        const stuck = cur < 4;
+
+        let dir;
+        if (stuck) {
+          // reverse away from whatever we hit instead of flying up
+          const f = horiz(vecAt(f32, c, 0x90), w);
+          const fl = Math.hypot(f[0], f[1], f[2]);
+          if (fl > 0.2) {
+            const a = (Math.random() - 0.5) * 1.0;
+            const bx = -f[0] / fl, by = -f[1] / fl, bz = -f[2] / fl;
+            dir = [
+              bx * Math.cos(a) - bz * Math.sin(a),
+              by,
+              bx * Math.sin(a) + bz * Math.cos(a)
+            ];
+          } else {
+            dir = [Math.random() * 2 - 1, 0, Math.random() * 2 - 1];
+            const dl = Math.hypot(dir[0], dir[2]) || 1;
+            dir = [dir[0] / dl, 0, dir[2] / dl];
+          }
+        } else {
+          const t = Math.abs(w[0]) > Math.abs(w[2]) ? [w[1], -w[0], 0] : [0, -w[2], w[1]];
+          const tl = Math.hypot(t[0], t[1], t[2]) || 1;
+          dir = [t[0] / tl, t[1] / tl, t[2] / tl];
+        }
+
+        const kick = stuck ? 20 + Math.random() * 10 : 12 + Math.random() * 12;
+        const lift = stuck ? 5 + Math.random() * 3 : 2 + Math.random() * 4;
         const vNow = vecAt(f32, rb || c, (rb ? 0xA0 : 0x70));
-        const effLift = Math.max(0, Math.min(lift, 26 - dot(vNow, w)));
+        const effLift = Math.max(0, Math.min(lift, 14 - dot(vNow, w)));
+        if (stuck) chaosTeleport(u, f32, c, dir);
         const kickVec = [
           dir[0] * kick + w[0] * effLift,
           dir[1] * kick + w[1] * effLift,
