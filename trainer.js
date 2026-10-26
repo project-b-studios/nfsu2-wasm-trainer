@@ -437,19 +437,21 @@
       }
 
       if (chaosOn && performance.now() >= chaosNext) {
-        chaosNext = performance.now() + 300 + Math.random() * 400;
+        chaosNext = performance.now() + 200 + Math.random() * 350;
         const t = Math.abs(w[0]) > Math.abs(w[2]) ? [w[1], -w[0], 0] : [0, -w[2], w[1]];
         const tl = Math.hypot(t[0], t[1], t[2]) || 1;
         const dir = [t[0] / tl, t[1] / tl, t[2] / tl];
         const mass = massOf(u, f32, c);
         const cur = speedOf(u, f32, c);
-        const stuck = cur < 2.5;
-        const kick = stuck ? 16 + Math.random() * 10 : 10 + Math.random() * 15;
-        const lift = stuck ? 11 + Math.random() * 5 : 4 + Math.random() * 6;
+        const stuck = cur < 6;
+        const kick = stuck ? 26 + Math.random() * 16 : 16 + Math.random() * 18;
+        const lift = stuck ? 20 + Math.random() * 12 : 10 + Math.random() * 10;
+        const vNow = vecAt(f32, rb || c, (rb ? 0xA0 : 0x70));
+        const effLift = Math.max(0, Math.min(lift, 26 - dot(vNow, w)));
         const kickVec = [
-          dir[0] * kick + w[0] * lift,
-          dir[1] * kick + w[1] * lift,
-          dir[2] * kick + w[2] * lift
+          dir[0] * kick + w[0] * effLift,
+          dir[1] * kick + w[1] * effLift,
+          dir[2] * kick + w[2] * effLift
         ];
 
         for (const [base, off] of [[c, 0x70], [rb, 0xA0]]) {
