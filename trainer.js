@@ -19,32 +19,125 @@
   let savedPos = null, loadState = null, loadUntil = 0, saveScan = null;
   let upAvg = null;
 
-  let gravOn = false, spinOn = false;
+  let gravOn = false, spinOn = false, spinState = null;
   let jumpPower = 8, panelOn = false;
   let paintAt = 0;
-  let driftPrev = 0, driftBankAt = 0, driftForce = true;
+  let driftPrev = 0, driftBankAt = 0, driftForce = true, driftLostAt = 0;
 
-  const HELP_TEXT = [
-    "NOS CONTROLS",
+  // The game's quick chat uses 1-4 (twice) in free roam, so the trainer's
+  // defaults stay on 5-0. Every action can be rebound from the panel.
+  const DEFAULT_BINDS = {
+    boost: "Digit5",
+    jump: "Digit6",
+    stop: "Digit7",
+    lock: "Digit8",
+    savePos: "Digit9",
+    loadPos: "Digit0",
+    powerDown: "BracketLeft",
+    powerUp: "BracketRight",
+    jumpDown: "Comma",
+    jumpUp: "Period",
+    spin: "KeyZ",
+    help: "KeyK"
+  };
+  const BIND_ACTIONS = [
+    ["boost", "NOS BOOST"],
+    ["jump", "JUMP"],
+    ["stop", "HARD STOP"],
+    ["lock", "STOP LOCK"],
+    ["savePos", "SAVE POSITION"],
+    ["loadPos", "LOAD POSITION"],
+    ["powerDown", "BOOST POWER -"],
+    ["powerUp", "BOOST POWER +"],
+    ["jumpDown", "JUMP POWER -"],
+    ["jumpUp", "JUMP POWER +"],
+    ["spin", "SPIN"],
+    ["help", "HELP"]
+  ];
+  const BIND_LABEL = Object.fromEntries(BIND_ACTIONS);
+  const BINDS = { ...DEFAULT_BINDS };
+
+  const CODE_LABELS = {
+    Backquote: "`", Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]",
+    Backslash: "\\", Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/",
+    Space: "Space", Enter: "Enter", NumpadEnter: "Num Enter", Tab: "Tab",
+    Backspace: "Backspace", Delete: "Del", Insert: "Insert", Home: "Home", End: "End",
+    PageUp: "PgUp", PageDown: "PgDn",
+    ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
+    NumpadAdd: "Num +", NumpadSubtract: "Num -", NumpadMultiply: "Num *",
+    NumpadDivide: "Num /", NumpadDecimal: "Num .", NumpadEqual: "Num =",
+    ShiftLeft: "LShift", ShiftRight: "RShift", ControlLeft: "LCtrl", ControlRight: "RCtrl",
+    AltLeft: "LAlt", AltRight: "RAlt"
+  };
+  for (let i = 0; i <= 9; i++) {
+    CODE_LABELS["Digit" + i] = String(i);
+    CODE_LABELS["Numpad" + i] = "Num " + i;
+  }
+  for (let i = 1; i <= 12; i++) CODE_LABELS["F" + i] = "F" + i;
+  for (let i = 0; i < 26; i++) {
+    const ch = String.fromCharCode(65 + i);
+    CODE_LABELS["Key" + ch] = ch;
+  }
+
+  const codeLabel = code => code ? (CODE_LABELS[code] || code) : "—";
+  const isModifierCode = code => /^(Shift|Control|Alt|Meta)(Left|Right)?$/.test(code || "");
+  const eventCode = e => {
+    if (e.code) return e.code;
+    if (e.key && e.key.length === 1) {
+      const ch = e.key.toUpperCase();
+      if (ch >= "A" && ch <= "Z") return "Key" + ch;
+      if (ch >= "0" && ch <= "9") return "Digit" + ch;
+      const m = {
+        "`": "Backquote", "-": "Minus", "=": "Equal", "[": "BracketLeft",
+        "]": "BracketRight", "\\": "Backslash", ";": "Semicolon", "'": "Quote",
+        ",": "Comma", ".": "Period", "/": "Slash", " ": "Space"
+      };
+      if (m[e.key]) return m[e.key];
+    }
+    return e.key || "";
+  };
+
+  const loadBinds = () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("nfsu2TrainerBinds") || "null");
+      if (!raw || typeof raw !== "object") return;
+      const seen = new Set();
+      for (const [action] of BIND_ACTIONS) {
+        const v = raw[action];
+        if (typeof v === "string" && v && v !== "none" && !seen.has(v)) {
+          BINDS[action] = v;
+          seen.add(v);
+        } else if (v === null || v === "none") {
+          BINDS[action] = null;
+        }
+      }
+    } catch (e) {}
+  };
+  const saveBinds = () => {
+    try { localStorage.setItem("nfsu2TrainerBinds", JSON.stringify(BINDS)); } catch (e) {}
+  };
+  loadBinds();
+
+  const helpText = () => [
+    "NFSU2 TRAINER v1.1",
     "",
-    "Keyboard (digit row or numpad)",
-    "  1  boost on/off",
-    "  2  jump",
-    "  3  stop once",
-    "  4  stop lock on/off",
-    "  5  save position",
-    "  6  load position",
-    "  7  boost power -50 km/h",
-    "  8  boost power +50 km/h",
-    "  , / .  jump power -/+",
-    "  PgUp/PgDn  jump power -/+",
+    "Keyboard (click a key badge in the panel to rebind)",
+    "  " + codeLabel(BINDS.boost) + "  NOS boost on/off",
+    "  " + codeLabel(BINDS.jump) + "  jump",
+    "  " + codeLabel(BINDS.stop) + "  stop once",
+    "  " + codeLabel(BINDS.lock) + "  stop lock on/off",
+    "  " + codeLabel(BINDS.savePos) + "  save position",
+    "  " + codeLabel(BINDS.loadPos) + "  load position",
+    "  " + codeLabel(BINDS.powerDown) + " / " + codeLabel(BINDS.powerUp) + "  boost power -/+ 50 km/h",
+    "  " + codeLabel(BINDS.jumpDown) + " / " + codeLabel(BINDS.jumpUp) + "  jump power -/+",
     "  Insert  show/hide panel",
-    "  Z  spin on/off",
-    "  0  show/hide this help",
+    "  " + codeLabel(BINDS.spin) + "  spin on/off",
+    "  " + codeLabel(BINDS.help) + "  show/hide this help",
     "  hold Alt  keep NOS active",
     "",
     "GAME",
-    "  X  drift mode (free roam; forced everywhere)",
+    "  1-4 twice  quick chat in free roam (left to the game)",
+    "  X  drift: game toggle in free roam, force drift elsewhere",
     "",
     "Gamepad",
     "  LB  boost on/off",
@@ -104,7 +197,7 @@
   hud.style.transform = "translateX(-50%)";
   hud.style.textAlign = "center";
   const help = mkBox(52);
-  help.textContent = HELP_TEXT;
+  help.textContent = helpText();
   help.style.top = "50%";
   help.style.left = "50%";
   help.style.transform = "translate(-50%,-50%)";
@@ -175,14 +268,43 @@
   // These are the game's drift-score fields, so the trainer can keep the
   // streak alive through a wall hit and bank it every 1,000,000 points.
   const G_FORCEDRIFT = 0x00890104, G_RACE = 0x00890118;
+  const G_FLOW = 0x008654A4, G_RACEKIND = 0x0089E7B0;
+  const G_CAREER_RACE = 0x00863470, G_GAMEMODE = 0x00850078;
 
-  const driftInfo = () => {
+  const inWorld = () => !!(u && u[G_FLOW >> 2] === 6);
+
+  const inFreeRoam = () => {
+    if (!inWorld()) return false;
+    const r = u[G_RACE >> 2];
+    if (!r || (r & 3) || r + 0xC00 > buf.byteLength) return false;
+    const state = u[r >> 2];
+    return (state === 4 || state === 6) &&
+      (u[(r + 0x24) >> 2] | 0) === 1 &&
+      u[G_CAREER_RACE >> 2] === 0 &&
+      u[G_RACEKIND >> 2] === 0 &&
+      (u[G_GAMEMODE >> 2] & 0x208) === 0;
+  };
+
+  // The racers are sorted by position at race +0xBD0. In a race the player is
+  // usually not the first one, so find the racer whose car is the player's car.
+  const driftInfo = car => {
     if (!u || !buf) return null;
     const none = { on: false, st: 0, dc: 0, state: 2, pend: 0, total: 0, level: 0 };
     const on = u[G_FORCEDRIFT >> 2] !== 0;
     const r = u[G_RACE >> 2];
-    if (!r || (r & 3) || r + 0xBD4 > buf.byteLength) return { ...none, on };
-    const rc = u[(r + 0xBD0) >> 2];
+    if (!r || (r & 3) || r + 0xC00 > buf.byteLength) return { ...none, on };
+    const n = Math.min(Math.max(u[(r + 0x24) >> 2] | 0, 0), 8);
+    let rc = 0;
+    if (car) {
+      for (let i = 0; i < n; i++) {
+        const p = u[(r + 0xBD0 + 4 * i) >> 2];
+        if (p && !(p & 3) && p + 0x20 <= buf.byteLength && u[p >> 2] === car) {
+          rc = p;
+          break;
+        }
+      }
+    }
+    if (!rc) rc = u[(r + 0xBD0) >> 2];
     if (!rc || (rc & 3) || rc + 0x1DC > buf.byteLength) return { ...none, on };
     const ds = u[(rc + 0x1D4) >> 2], dc = u[(rc + 0x1D8) >> 2];
     if (!ds || (ds & 3) || ds + 4 > buf.byteLength) return { ...none, on };
@@ -199,12 +321,14 @@
     };
   };
 
-  const driftTick = () => {
-    // The game's own X toggle only works in free roam. Forcing the drift-event
-    // switch keeps the drift physics and scoring on in every driving mode.
-    if (driftForce && u) u[G_FORCEDRIFT >> 2] = 1;
-    const d = driftInfo();
-    if (!d || !d.on || !d.st) { driftPrev = 0; return; }
+  const driftTick = car => {
+    // The game's own X toggle only works in free roam. Outside free roam,
+    // forcing the drift-event switch keeps the drift physics and scoring on.
+    // In free roam, X stays the game's own drift toggle, so don't fight it.
+    if (driftForce && inWorld() && !inFreeRoam()) u[G_FORCEDRIFT >> 2] = 1;
+    const d = driftInfo(car);
+    if (!d || !d.on || !d.st) { driftPrev = 0; driftLostAt = 0; return; }
+    const now = performance.now();
     if (d.state === 4) {
       // a wall took the drift: put its points back and keep counting
       const keep = Math.max(driftPrev, d.pend);
@@ -212,14 +336,28 @@
         f32[(d.st + 0x24) >> 2] = keep;
         u[(d.st + 0x14) >> 2] = 0;
         driftPrev = keep;
+        driftLostAt = now;
       }
       return;
     }
+    if (d.state === 3) {
+      // the game banked it; let the bank stand
+      driftPrev = 0;
+      driftLostAt = 0;
+      return;
+    }
     if (d.state === 0 || d.state === 1) {
-      if (d.pend > 0) driftPrev = d.pend;
-      if (d.pend >= 1000000 && performance.now() >= driftBankAt) {
+      if (driftPrev > 0 && d.pend + 1 < driftPrev) {
+        // the game reset the drift between two ticks (a crash): restore it
+        f32[(d.st + 0x24) >> 2] = driftPrev;
+        u[(d.st + 0x14) >> 2] = 0;
+        driftLostAt = now;
+      } else if (d.pend > 0) {
+        driftPrev = d.pend;
+      }
+      if (d.pend >= 1000000 && now >= driftBankAt) {
         const banks = Math.floor(d.pend / 1000000) * 1000000;
-        driftBankAt = performance.now() + 1000;
+        driftBankAt = now + 1000;
         f32[(d.st + 0x2C) >> 2] = d.total + banks;
         f32[(d.st + 0x24) >> 2] = d.pend - banks;
         driftPrev = d.pend - banks;
@@ -227,7 +365,15 @@
       }
       return;
     }
+    if (d.state === 2 && driftPrev > 0 && now - driftLostAt < 800) {
+      // a crash can go 4 -> 2 before the next tick; keep the points
+      f32[(d.st + 0x24) >> 2] = driftPrev;
+      u[(d.st + 0x14) >> 2] = 0;
+      driftLostAt = now;
+      return;
+    }
     driftPrev = 0;
+    driftLostAt = 0;
   };
 
   const isAlt = e => e.key === "Alt" || e.key === "AltGraph" || e.code === "AltLeft" || e.code === "AltRight";
@@ -392,10 +538,13 @@
 
   const iv = setInterval(() => {
     const g = get();
+    // Set the switch even when the car pointer is not ready yet (a respawn,
+    // a race loading): the next car is then built with drift handling on.
+    if (u && driftForce && inWorld() && !inFreeRoam()) u[G_FORCEDRIFT >> 2] = 1;
     if (!g) return;
-    const u = g.u, f32 = g.f32, c = g.c, n = c + 0x40;
+    const f32 = g.f32, c = g.c, n = c + 0x40;
 
-    driftTick();
+    driftTick(c);
 
     {
       const up = [f32[(c + 0xB0) >> 2], f32[(c + 0xB4) >> 2], f32[(c + 0xB8) >> 2]];
@@ -470,21 +619,49 @@
       }
 
       if (spinOn) {
-        // spin in place: yaw the car around its own up axis, kill sideways motion
-        const own = vecAt(f32, c, 0xB0);
-        const ol = Math.hypot(own[0], own[1], own[2]);
-        const axis = ol > 0.5 && ol < 1.5 ? [own[0] / ol, own[1] / ol, own[2] / ol] : w;
-        const ang = 0.09;
-        for (const off of [0x90, 0xA0, 0xB0]) putVec(f32, c, off, rot(vecAt(f32, c, off), axis, ang));
-        for (const [base, off] of [[c, 0x70], [rb, 0xA0]]) {
-          if (!base) continue;
-          const v = vecAt(f32, base, off);
-          const vy = dot(v, w);
-          putVec(f32, base, off, [w[0] * vy, w[1] * vy, w[2] * vy]);
+        // Spin in place: hold the car's position and yaw its frame around the
+        // world's vertical axis every tick. The game's world is Z-up, so
+        // wUpVec() is [0,0,1] here (and [0,1,0] on a Y-up build).
+        if (!spinState || spinState.car !== c) {
+          spinState = {
+            car: c,
+            p: vecAt(f32, c, 0x60),
+            off: [
+              f32[(c + 0x60) >> 2] - f32[(c + 0x50) >> 2],
+              f32[(c + 0x64) >> 2] - f32[(c + 0x54) >> 2],
+              f32[(c + 0x68) >> 2] - f32[(c + 0x58) >> 2]
+            ],
+            rb,
+            rbP: rb ? vecAt(f32, rb, 0x20) : null
+          };
         }
-        for (let i = 0; i < 3; i++) f32[(c + 0x110 + 4 * i) >> 2] = 0;
+        const st = spinState;
+        const axis = wUpVec();
+        const ang = 0.06;
+        for (const off of [0x90, 0xA0, 0xB0]) {
+          putVec(f32, c, off, rot(vecAt(f32, c, off), axis, ang));
+        }
+        if (st.rb) {
+          for (const off of [0x30, 0x40, 0x50]) {
+            putVec(f32, st.rb, off, rot(vecAt(f32, st.rb, off), axis, ang));
+          }
+        }
+        st.off = rot(st.off, axis, ang);
+        putVec(f32, c, 0x60, st.p);
+        putVec(f32, c, 0x50, [
+          st.p[0] - st.off[0],
+          st.p[1] - st.off[1],
+          st.p[2] - st.off[2]
+        ]);
+        if (st.rb) putVec(f32, st.rb, 0x20, st.rbP || st.p);
+        for (const [base, off] of [[c, 0x70], [c, 0x110], [rb, 0x70], [rb, 0x80], [rb, 0xA0], [rb, 0xC0]]) {
+          if (!base) continue;
+          for (let i = 0; i < 3; i++) f32[(base + off + 4 * i) >> 2] = 0;
+        }
         f32[(c + 0x42C) >> 2] = 0;
         f32[(c + 0x430) >> 2] = 0;
+      } else if (spinState) {
+        spinState = null;
       }
     }
 
@@ -559,7 +736,8 @@
       driftForce = !driftForce;
       if (!driftForce) {
         const gg = get();
-        if (gg) gg.u[G_FORCEDRIFT >> 2] = 0;
+        // In free roam the game's X owns this switch; leave it alone there.
+        if (gg && !inFreeRoam()) gg.u[G_FORCEDRIFT >> 2] = 0;
       }
       toast("Force drift " + (driftForce ? "ON" : "OFF"));
       paint(performance.now(), true);
@@ -675,6 +853,81 @@
   panel.appendChild(body);
 
   const pbtn = {};
+
+  // Key badges are clickable: click one, press a key. A key already used by
+  // another action swaps with it, so no action is left without a key.
+  let rebindAction = null;
+  const bindBadge = {};
+
+  const updateBindBadges = () => {
+    for (const action in bindBadge) {
+      const el = bindBadge[action];
+      if (!el) continue;
+      const active = rebindAction === action;
+      el.textContent = active ? "..." : codeLabel(BINDS[action]);
+      el.style.borderColor = active ? "#39ff88" : "#2a3037";
+      el.style.color = active ? "#39ff88" : "#8a95a1";
+      el.style.background = active ? "rgba(24,64,42,.55)" : "#0d1014";
+    }
+    help.textContent = helpText();
+    helpBtn.title = "Help (" + codeLabel(BINDS.help) + ")";
+  };
+
+  const cancelRebind = () => {
+    if (!rebindAction) return;
+    rebindAction = null;
+    updateBindBadges();
+  };
+
+  const beginRebind = action => {
+    if (!BIND_LABEL[action]) return;
+    rebindAction = action;
+    try { if (document.activeElement) document.activeElement.blur(); } catch (e) {}
+    updateBindBadges();
+    toast("Press a key for " + BIND_LABEL[action] + " (Esc cancels)");
+  };
+
+  const applyBind = code => {
+    const action = rebindAction;
+    if (!action) return;
+    const old = BINDS[action];
+    let other = null;
+    for (const [a] of BIND_ACTIONS) {
+      if (a !== action && BINDS[a] === code) { other = a; break; }
+    }
+    if (other) BINDS[other] = old;
+    BINDS[action] = code;
+    rebindAction = null;
+    saveBinds();
+    updateBindBadges();
+    const label = BIND_LABEL[action] || action;
+    toast(label + " = " + codeLabel(code) +
+      (other ? " (swapped with " + (BIND_LABEL[other] || other) + ")" : ""));
+  };
+
+  const mkBindBadge = action => {
+    const k = document.createElement("span");
+    k.setAttribute("role", "button");
+    k.tabIndex = 0;
+    k.title = "Click to rebind " + (BIND_LABEL[action] || action);
+    k.style.cssText =
+      "min-width:20px;padding:2px 5px;border:1px solid #2a3037;border-radius:4px;" +
+      "background:#0d1014;color:#8a95a1;font:700 10px monospace;text-align:center;" +
+      "cursor:pointer;user-select:none;pointer-events:auto";
+    const start = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      beginRebind(action);
+    };
+    k.addEventListener("click", start);
+    k.addEventListener("keydown", ev => {
+      if (ev.key === "Enter" || ev.key === " ") start(ev);
+    });
+    bindBadge[action] = k;
+    k.textContent = codeLabel(BINDS[action]);
+    return k;
+  };
+
   const section = title => {
     const h = document.createElement("div");
     h.textContent = title;
@@ -697,7 +950,9 @@
     lab.textContent = label;
     lab.style.cssText = "flex:1";
     b.appendChild(lab);
-    if (opts.key) {
+    if (opts.bind) {
+      b.appendChild(mkBindBadge(opts.bind));
+    } else if (opts.key) {
       const k = document.createElement("span");
       k.textContent = opts.key;
       k.style.cssText = "color:#59636e;font:10px monospace";
@@ -726,16 +981,22 @@
     }
   };
 
-  const mkSlider = (parent, label, min, max, step, value, format, onInput) => {
+  const mkSlider = (parent, label, min, max, step, value, format, onInput, binds) => {
     const wrap = document.createElement("div");
     wrap.style.cssText = "padding:3px 2px 2px";
     const top = document.createElement("div");
-    top.style.cssText = "display:flex;justify-content:space-between;gap:8px;color:#7f8a96;font-size:10px;margin-bottom:2px";
+    top.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;color:#7f8a96;font-size:10px;margin-bottom:2px";
     const lab = document.createElement("span");
     const val = document.createElement("span");
     val.style.cssText = "color:#aeb8c2;font-family:monospace";
     top.appendChild(lab);
     top.appendChild(val);
+    if (binds) {
+      const keys = document.createElement("span");
+      keys.style.cssText = "display:flex;gap:3px;margin-left:auto";
+      for (const action of binds) keys.appendChild(mkBindBadge(action));
+      top.appendChild(keys);
+    }
     wrap.appendChild(top);
     const r = document.createElement("input");
     r.type = "range";
@@ -754,16 +1015,16 @@
   };
 
   const gNos = section("NOS");
-  const boostBtn = mkRow(gNos, "NOS BOOST", "boost", { key: "1", state: "OFF" });
+  const boostBtn = mkRow(gNos, "NOS BOOST", "boost", { bind: "boost", state: "OFF" });
   const boostS = mkSlider(gNos, "Power", BOOST_MIN, BOOST_MAX, BOOST_STEP, boostKmh,
-    v => "+" + v + " km/h", v => { boostKmh = v; });
+    v => "+" + v + " km/h", v => { boostKmh = v; }, ["powerDown", "powerUp"]);
 
   const gMove = section("MOVEMENT");
-  mkRow(gMove, "JUMP", "jump", { key: "2" });
-  mkRow(gMove, "HARD STOP", "stop", { key: "3" });
-  const lockBtn = mkRow(gMove, "STOP LOCK", "lock", { key: "4", state: "OFF" });
+  mkRow(gMove, "JUMP", "jump", { bind: "jump" });
+  mkRow(gMove, "HARD STOP", "stop", { bind: "stop" });
+  const lockBtn = mkRow(gMove, "STOP LOCK", "lock", { bind: "lock", state: "OFF" });
   const jumpS = mkSlider(gMove, "Jump power", 6, 60, 4, jumpPower,
-    v => String(v), v => { jumpPower = v; });
+    v => String(v), v => { jumpPower = v; }, ["jumpDown", "jumpUp"]);
 
   const gDrift = section("DRIFT");
   const driftBtn = mkRow(gDrift, "FORCE DRIFT", "drift", { state: "ON" });
@@ -775,15 +1036,39 @@
   gDrift.appendChild(driftStat);
 
   const gPos = section("POSITION");
-  mkRow(gPos, "SAVE POSITION", "savePos", { key: "5" });
-  mkRow(gPos, "LOAD POSITION", "loadPos", { key: "6" });
+  mkRow(gPos, "SAVE POSITION", "savePos", { bind: "savePos" });
+  mkRow(gPos, "LOAD POSITION", "loadPos", { bind: "loadPos" });
 
   const gMore = section("EXTRAS");
-  mkRow(gMore, "SPIN", "spin", { key: "Z", state: "OFF" });
+  mkRow(gMore, "SPIN", "spin", { bind: "spin", state: "OFF" });
   const gravBtn = mkRow(gMore, "LOW GRAVITY", "grav", { state: "OFF" });
+  mkRow(gMore, "HELP", "help", { bind: "help" });
+
+  const gKeys = section("KEYS");
+  const keyHint = document.createElement("div");
+  keyHint.textContent = "Click a key badge to rebind. Esc cancels; a key already in use is swapped.";
+  keyHint.style.cssText = "color:#5f6a75;font-size:9px;line-height:1.45;padding:0 2px 4px";
+  gKeys.appendChild(keyHint);
+  const resetKeys = document.createElement("button");
+  resetKeys.type = "button";
+  resetKeys.textContent = "RESET KEY BINDINGS";
+  resetKeys.style.cssText =
+    "width:100%;padding:6px 8px;background:#14181d;color:#8a95a1;border:1px solid #2a3037;" +
+    "border-radius:5px;font:700 10px 'Segoe UI',system-ui,sans-serif;cursor:pointer";
+  resetKeys.addEventListener("click", ev => {
+    ev.preventDefault();
+    Object.assign(BINDS, DEFAULT_BINDS);
+    rebindAction = null;
+    saveBinds();
+    updateBindBadges();
+    toast("Key bindings reset");
+    resetKeys.blur();
+  });
+  gKeys.appendChild(resetKeys);
+  updateBindBadges();
 
   const foot = document.createElement("div");
-  foot.textContent = "Insert = hide · drag the header to move";
+  foot.textContent = "Insert = hide | drag the header to move";
   foot.style.cssText = "margin-top:9px;padding-top:7px;border-top:1px solid #1e252c;color:#4f5963;font-size:9px;text-align:center";
   body.appendChild(foot);
 
@@ -861,7 +1146,7 @@
   const paint = (now, force) => {
     if (!force && now < paintAt) return;
     paintAt = now + 120;
-    const d = driftInfo();
+    const d = driftInfo(last.car);
 
     if (panelOn) {
       setOn(boostBtn, boostOn);
@@ -872,8 +1157,10 @@
       const don = !!(d && d.on);
       driftStat.textContent = don
         ? "x" + (d.level || 1) + "  " + Math.round(d.pend).toLocaleString("en-US") +
-          "  ·  total " + Math.round(d.total).toLocaleString("en-US")
-        : driftForce ? "forcing drift..." : "drift force off";
+          "  |  total " + Math.round(d.total).toLocaleString("en-US")
+        : driftForce
+          ? (inFreeRoam() ? "free roam: press X for drift" : "forcing drift...")
+          : "drift force off";
       if (document.activeElement !== boostS.r) {
         boostS.r.value = boostKmh;
         boostS.val.textContent = boostS.format(boostKmh);
@@ -886,20 +1173,61 @@
   };
 
   setPanel(false);
-  toast("Trainer ready · Insert for panel");
+  toast("Trainer ready | Insert for panel");
 
-  const KEYS = {
-    0: "help",
-    1: "boost", 2: "jump", 3: "stop", 4: "lock",
-    5: "savePos", 6: "loadPos", 7: "powerDown", 8: "powerUp"
+  const domTyping = () => {
+    const a = document.activeElement;
+    if (!a) return false;
+    if (a.isContentEditable) return true;
+    const tag = a.tagName;
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const t = (a.type || "text").toLowerCase();
+      return !/^(range|checkbox|radio|button|submit|reset|color|file|image)$/.test(t);
+    }
+    return false;
   };
 
-  const typing = () => {
+  const gameTyping = () => {
     if (!u) return false;
     return (u[0x0083A9C0 >> 2] & 0xff) !== 0 || (u[0x0083A9C4 >> 2] & 0xff) !== 0;
   };
 
+  const typing = () => domTyping() || gameTyping();
+
+  const exactAction = code => {
+    for (const [action] of BIND_ACTIONS) {
+      if (BINDS[action] && BINDS[action] === code) return action;
+    }
+    return null;
+  };
+  const actionFor = code => {
+    const exact = exactAction(code);
+    if (exact) return exact;
+    if (/^Digit[0-9]$/.test(code)) return exactAction("Numpad" + code.slice(5));
+    if (/^Numpad[0-9]$/.test(code)) return exactAction("Digit" + code.slice(6));
+    return null;
+  };
+
+  const RESERVED_BINDS = {
+    Insert: "Insert is reserved for the panel",
+    Escape: "Escape is reserved for the game menu",
+    KeyP: "P is the game's pause key",
+    F9: "F9 is reserved"
+  };
+
   listen("keydown", e => {
+    if (rebindAction) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") { cancelRebind(); return; }
+      const code = eventCode(e);
+      if (isModifierCode(code) || isAlt(e)) return;
+      if (RESERVED_BINDS[code]) { toast(RESERVED_BINDS[code]); return; }
+      if (!code) return;
+      applyBind(code);
+      return;
+    }
     if (isAlt(e)) {
       if (typing()) return;
       held = true;
@@ -907,24 +1235,29 @@
       return;
     }
     if (e.repeat) return;
-    if (e.key === "Insert") { e.preventDefault(); e.stopPropagation(); return act("panel"); }
     if (typing()) return;
-    if (e.code === "BracketLeft" || e.key === "[" || e.key === "," ||
-        e.key === "PageDown" || e.code === "NumpadSubtract" || e.key === "-") return act("jumpDown");
-    if (e.code === "BracketRight" || e.key === "]" || e.key === "." ||
-        e.key === "PageUp" || e.code === "NumpadAdd" || e.key === "+" || e.key === "=") return act("jumpUp");
-    if (e.key.length === 1) {
-      const l = { z: "spin" }[e.key.toLowerCase()];
-      if (l) return act(l);
+    if (e.key === "Insert") { e.preventDefault(); e.stopPropagation(); return act("panel"); }
+    const code = eventCode(e);
+    const bound = actionFor(code);
+    if (bound) {
+      e.preventDefault();
+      e.stopPropagation();
+      return act(bound);
     }
-    for (const k in KEYS) {
-      if (e.key === k || e.code === "Digit" + k || e.code === "Numpad" + k) return act(KEYS[k]);
+    // X is the game's own drift toggle in free roam. Elsewhere it would only
+    // show "Drift mode only works in free roam", so use it for force drift.
+    if (code === "KeyX") {
+      if (inFreeRoam()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return act("drift");
     }
   });
 
   listen("keyup", e => {
     if (!isAlt(e)) return;
     held = false;
+    if (typing()) return;
     e.preventDefault();
     const g = get();
     if (g) {
@@ -1002,5 +1335,5 @@
       console.log("[NOS] stopped");
     }
   };
-  console.log("[NOS] running v1.1 (press Insert for the panel, 0 for controls)");
+  console.log("[NOS] running v1.1 (press Insert for the panel, " + codeLabel(BINDS.help) + " for controls)");
 })();
