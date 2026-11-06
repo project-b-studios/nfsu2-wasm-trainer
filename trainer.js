@@ -19,9 +19,10 @@
   let savedPos = null, loadState = null, loadUntil = 0, saveScan = null;
   let upAvg = null;
 
-  let chaosOn = false, gravOn = false, spinOn = false;
+  let gravOn = false, spinOn = false;
   let jumpPower = 8, panelOn = false, teleOn = true;
-  let chaosNext = 0, paintAt = 0;
+  let paintAt = 0;
+  let driftPrev = 0, driftBankAt = 0;
 
   const HELP_TEXT = [
     "NOS CONTROLS",
@@ -37,19 +38,20 @@
     "  8  boost power +50 km/h",
     "  , / .  jump power -/+",
     "  PgUp/PgDn  jump power -/+",
-    "  X  chaos mode on/off",
-    "  G  low gravity on/off",
     "  Z  spin on/off",
-    "  P  show/hide on-screen panel",
+    "  F9 show/hide on-screen panel",
     "  T  show/hide speedometer",
     "  0  show/hide this help",
     "  hold Alt  keep NOS active",
+    "",
+    "GAME",
+    "  X  drift mode on/off (free roam)",
     "",
     "Gamepad",
     "  LB  boost on/off",
     "  RB  jump",
     "  A   stop lock on/off",
-    "  B   chaos mode",
+    "  B   drift mode (X)",
     "  X   low gravity",
     "  Y   spin",
     "  D-pad left/right  save/load position",
@@ -170,6 +172,62 @@
     return { u, f32, c };
   };
 
+  // Drift mode in free roam is the game's own: X toggles it (runtime/drift.c).
+  // These are the game's drift-score fields, so the trainer can keep the
+  // streak alive through a wall hit and bank it every 1,000,000 points.
+  const G_FORCEDRIFT = 0x00890104, G_RACE = 0x00890118;
+
+  const driftInfo = () => {
+    if (!u || !buf) return null;
+    const none = { on: false, st: 0, dc: 0, state: 2, pend: 0, total: 0, level: 0 };
+    const on = u[G_FORCEDRIFT >> 2] !== 0;
+    const r = u[G_RACE >> 2];
+    if (!r || (r & 3) || r + 0xBD4 > buf.byteLength) return { ...none, on };
+    const rc = u[(r + 0xBD0) >> 2];
+    if (!rc || (rc & 3) || rc + 0x1DC > buf.byteLength) return { ...none, on };
+    const ds = u[(rc + 0x1D4) >> 2], dc = u[(rc + 0x1D8) >> 2];
+    if (!ds || (ds & 3) || ds + 4 > buf.byteLength) return { ...none, on };
+    const st = u[ds >> 2];
+    if (!st || (st & 3) || st + 0x30 > buf.byteLength) return { ...none, on };
+    const state = u[(st + 0x14) >> 2];
+    const pend = f32[(st + 0x24) >> 2], total = f32[(st + 0x2C) >> 2];
+    const level = dc && !(dc & 3) && dc + 0x20 <= buf.byteLength ? u[(dc + 0x1C) >> 2] : 0;
+    return {
+      on, st, dc, state,
+      pend: Number.isFinite(pend) ? pend : 0,
+      total: Number.isFinite(total) ? total : 0,
+      level: level >= 1 && level <= 5 ? level : 1
+    };
+  };
+
+  const driftTick = () => {
+    const d = driftInfo();
+    if (!d || !d.on || !d.st) { driftPrev = 0; return; }
+    if (d.state === 4) {
+      // a wall took the drift: put its points back and keep counting
+      const keep = Math.max(driftPrev, d.pend);
+      if (keep > 0) {
+        f32[(d.st + 0x24) >> 2] = keep;
+        u[(d.st + 0x14) >> 2] = 0;
+        driftPrev = keep;
+      }
+      return;
+    }
+    if (d.state === 0 || d.state === 1) {
+      if (d.pend > 0) driftPrev = d.pend;
+      if (d.pend >= 1000000 && performance.now() >= driftBankAt) {
+        const banks = Math.floor(d.pend / 1000000) * 1000000;
+        driftBankAt = performance.now() + 1000;
+        f32[(d.st + 0x2C) >> 2] = d.total + banks;
+        f32[(d.st + 0x24) >> 2] = d.pend - banks;
+        driftPrev = d.pend - banks;
+        toast("Drift: " + banks.toLocaleString("en-US") + " banked");
+      }
+      return;
+    }
+    driftPrev = 0;
+  };
+
   const isAlt = e => e.key === "Alt" || e.key === "AltGraph" || e.code === "AltLeft" || e.code === "AltRight";
 
   const rbOf = (u, c) => {
@@ -279,27 +337,6 @@
     }
   };
 
-  const captureSlots = (u, f32, c) => {
-    const found = new Map([
-      ["c:" + 0x60, { k: "c", off: 0x60, needle: "p" }],
-      ["c:" + 0x50, { k: "c", off: 0x50, needle: "com" }]
-    ]);
-    scanPos(u, f32, c, found);
-    return [...found.values()];
-  };
-
-  const chaosTeleport = (u, f32, c, dir) => {
-    const st = snap(f32, c);
-    st.slots = captureSlots(u, f32, c);
-    const d = 5 + Math.random() * 5;
-    for (const key of ["p", "com"]) {
-      st[key][0] += dir[0] * d;
-      st[key][1] += 0.6 + Math.random() * 0.8;
-      st[key][2] += dir[2] * d;
-    }
-    writeSlots(u, f32, c, st);
-  };
-
   const jump = (u, f32, c, power) => {
     const rb = rbOf(u, c);
     if (!rb) return console.log("[NOS] no rb");
@@ -355,6 +392,8 @@
     const g = get();
     if (!g) return;
     const u = g.u, f32 = g.f32, c = g.c, n = c + 0x40;
+
+    driftTick();
 
     {
       const up = [f32[(c + 0xB0) >> 2], f32[(c + 0xB4) >> 2], f32[(c + 0xB8) >> 2]];
@@ -429,109 +468,21 @@
       }
 
       if (spinOn) {
-        const hf = horiz(vecAt(f32, c, 0x90), w);
-        const hl = Math.hypot(hf[0], hf[1], hf[2]);
-        if (rb && hl > 0.2) {
-          const dir = [hf[0] / hl, hf[1] / hl, hf[2] / hl];
-          const side = [
-            w[1] * dir[2] - w[2] * dir[1],
-            w[2] * dir[0] - w[0] * dir[2],
-            w[0] * dir[1] - w[1] * dir[0]
-          ];
-          const mass = massOf(u, f32, c);
-          const v = vecAt(f32, rb, 0xA0);
-          const sideSpeed = dot(v, side);
-          const fwdSpeed = dot(v, dir);
-          const next = [v[0], v[1], v[2]];
-
-          // scrub forward speed so the donut stays tight
-          if (fwdSpeed > 7) {
-            const scrub = (fwdSpeed - 7) * 0.16;
-            for (let i = 0; i < 3; i++) next[i] -= dir[i] * scrub;
-          }
-
-          // lower lateral target -> much smaller radius
-          const targetSide = 6.5;
-          let push = 0;
-          if (Math.abs(sideSpeed) < targetSide) {
-            push = Math.min((targetSide - Math.abs(sideSpeed)) * 0.18, 1.2) * (sideSpeed >= 0 ? 1 : -1);
-            for (let i = 0; i < 3; i++) next[i] += side[i] * push;
-          }
-
-          for (let i = 0; i < 3; i++) {
-            f32[(rb + 0xA0 + 4 * i) >> 2] = next[i];
-            f32[(rb + 0x70 + 4 * i) >> 2] += side[i] * push * mass;
-            f32[(c + 0x70 + 4 * i) >> 2] = next[i];
-          }
-
-          const ang = 0.1;
-          for (const off of [0x90, 0xA0, 0xB0]) putVec(f32, c, off, rot(vecAt(f32, c, off), w, ang));
-          putVec(f32, rb, 0xA0, rot(vecAt(f32, rb, 0xA0), w, ang));
-          putVec(f32, c, 0x70, rot(vecAt(f32, c, 0x70), w, ang));
-
-          const ns = speedOf(u, f32, c);
-          f32[(c + 0x42C) >> 2] = ns;
-          f32[(c + 0x430) >> 2] = ns;
-        }
-      }
-
-      if (chaosOn && performance.now() >= chaosNext) {
-        chaosNext = performance.now() + 250 + Math.random() * 350;
-        const mass = massOf(u, f32, c);
-        const cur = speedOf(u, f32, c);
-        const stuck = cur < 4;
-
-        let dir;
-        if (stuck) {
-          // reverse away from whatever we hit instead of flying up
-          const f = horiz(vecAt(f32, c, 0x90), w);
-          const fl = Math.hypot(f[0], f[1], f[2]);
-          if (fl > 0.2) {
-            const a = (Math.random() - 0.5) * 1.0;
-            const bx = -f[0] / fl, by = -f[1] / fl, bz = -f[2] / fl;
-            dir = [
-              bx * Math.cos(a) - bz * Math.sin(a),
-              by,
-              bx * Math.sin(a) + bz * Math.cos(a)
-            ];
-          } else {
-            dir = [Math.random() * 2 - 1, 0, Math.random() * 2 - 1];
-            const dl = Math.hypot(dir[0], dir[2]) || 1;
-            dir = [dir[0] / dl, 0, dir[2] / dl];
-          }
-        } else {
-          const t = Math.abs(w[0]) > Math.abs(w[2]) ? [w[1], -w[0], 0] : [0, -w[2], w[1]];
-          const tl = Math.hypot(t[0], t[1], t[2]) || 1;
-          dir = [t[0] / tl, t[1] / tl, t[2] / tl];
-        }
-
-        const kick = stuck ? 20 + Math.random() * 10 : 12 + Math.random() * 12;
-        const lift = stuck ? 5 + Math.random() * 3 : 2 + Math.random() * 4;
-        const vNow = vecAt(f32, rb || c, (rb ? 0xA0 : 0x70));
-        const effLift = Math.max(0, Math.min(lift, 14 - dot(vNow, w)));
-        if (stuck) chaosTeleport(u, f32, c, dir);
-        const kickVec = [
-          dir[0] * kick + w[0] * effLift,
-          dir[1] * kick + w[1] * effLift,
-          dir[2] * kick + w[2] * effLift
-        ];
-
+        // spin in place: yaw the car around its own up axis, kill sideways motion
+        const own = vecAt(f32, c, 0xB0);
+        const ol = Math.hypot(own[0], own[1], own[2]);
+        const axis = ol > 0.5 && ol < 1.5 ? [own[0] / ol, own[1] / ol, own[2] / ol] : w;
+        const ang = 0.09;
+        for (const off of [0x90, 0xA0, 0xB0]) putVec(f32, c, off, rot(vecAt(f32, c, off), axis, ang));
         for (const [base, off] of [[c, 0x70], [rb, 0xA0]]) {
           if (!base) continue;
           const v = vecAt(f32, base, off);
-          putVec(f32, base, off, stuck
-            ? kickVec
-            : [v[0] + kickVec[0], v[1] + kickVec[1], v[2] + kickVec[2]]);
+          const vy = dot(v, w);
+          putVec(f32, base, off, [w[0] * vy, w[1] * vy, w[2] * vy]);
         }
-        if (rb) {
-          for (let i = 0; i < 3; i++) {
-            f32[(rb + 0x70 + 4 * i) >> 2] += kickVec[i] * mass;
-          }
-        }
-
-        const cs = speedOf(u, f32, c);
-        f32[(c + 0x42C) >> 2] = cs;
-        f32[(c + 0x430) >> 2] = cs;
+        for (let i = 0; i < 3; i++) f32[(c + 0x110 + 4 * i) >> 2] = 0;
+        f32[(c + 0x42C) >> 2] = 0;
+        f32[(c + 0x430) >> 2] = 0;
       }
     }
 
@@ -581,6 +532,12 @@
     paint(performance.now());
   }, 8);
 
+  const pressX = () => {
+    const o = { key: "x", code: "KeyX", keyCode: 88, which: 88, bubbles: true, cancelable: true };
+    document.dispatchEvent(new KeyboardEvent("keydown", o));
+    document.dispatchEvent(new KeyboardEvent("keyup", o));
+  };
+
   const act = name => {
     if (name === "help") {
       helpOn = !helpOn;
@@ -604,11 +561,16 @@
       return;
     }
 
-    if (name === "chaos" || name === "grav" || name === "spin") {
-      const label = name === "chaos" ? "Chaos" : name === "grav" ? "Low gravity" : "Spin";
+    if (name === "drift") {
+      pressX();
+      toast("Drift: X (free roam)");
+      return;
+    }
+
+    if (name === "grav" || name === "spin") {
+      const label = name === "grav" ? "Low gravity" : "Spin";
       let on;
-      if (name === "chaos") { chaosOn = !chaosOn; on = chaosOn; }
-      else if (name === "grav") { gravOn = !gravOn; on = gravOn; }
+      if (name === "grav") { gravOn = !gravOn; on = gravOn; }
       else {
         spinOn = !spinOn;
         on = spinOn;
@@ -690,42 +652,48 @@
   panel.style.right = "10px";
   panel.style.bottom = "10px";
   panel.style.left = "auto";
-  panel.style.padding = "8px";
+  panel.style.padding = "10px";
   panel.style.color = "#0f0";
-  panel.style.background = "rgba(0,0,0,.78)";
+  panel.style.background = "rgba(0,0,0,.86)";
   panel.style.border = "1px solid #0f0";
-  panel.style.borderRadius = "8px";
+  panel.style.borderRadius = "10px";
   panel.style.font = "bold 11px monospace";
   panel.style.pointerEvents = "auto";
-  panel.style.width = "196px";
+  panel.style.width = "268px";
 
   const panelTitle = document.createElement("div");
-  panelTitle.textContent = "NFSU2 TRAINER v1.2";
-  panelTitle.style.cssText = "text-align:center;letter-spacing:1px;margin-bottom:6px;color:#0f0";
+  panelTitle.textContent = "NFSU2 TRAINER v1.1";
+  panelTitle.style.cssText = "text-align:center;letter-spacing:1px;margin-bottom:2px;color:#0f0;font-size:12px";
   panel.appendChild(panelTitle);
 
-  const grid = document.createElement("div");
-  grid.style.cssText = "display:flex;flex-wrap:wrap;gap:4px";
-  panel.appendChild(grid);
+  const panelSub = document.createElement("div");
+  panelSub.textContent = "F9 panel · X = drift (game)";
+  panelSub.style.cssText = "text-align:center;color:#777;font-size:9px;margin-bottom:4px";
+  panel.appendChild(panelSub);
 
   const pbtn = {};
-  const mkBtn = (label, action) => {
+  const section = title => {
+    const h = document.createElement("div");
+    h.textContent = title;
+    h.style.cssText = "margin:8px 0 4px;padding-top:6px;border-top:1px solid #243;color:#8f8;font-size:9px;letter-spacing:1px";
+    panel.appendChild(h);
+    const g = document.createElement("div");
+    g.style.cssText = "display:grid;grid-template-columns:repeat(3,1fr);gap:5px";
+    panel.appendChild(g);
+    return g;
+  };
+  const mkBtn = (parent, label, action, wide) => {
     const b = document.createElement("button");
     b.textContent = label;
-    b.style.cssText = "flex:1 1 30%;padding:6px 2px;background:#111;color:#0f0;border:1px solid #555;border-radius:4px;font:bold 10px monospace;cursor:pointer";
+    b.style.cssText = "padding:8px 2px;background:#111;color:#0f0;border:1px solid #555;border-radius:5px;font:bold 10px monospace;cursor:pointer" + (wide ? ";grid-column:span 3" : "");
     b.addEventListener("click", ev => { ev.preventDefault(); act(action); b.blur(); });
-    grid.appendChild(b);
+    parent.appendChild(b);
     pbtn[action] = b;
+    return b;
   };
-  [
-    ["NOS", "boost"], ["JUMP", "jump"], ["STOP", "stop"],
-    ["LOCK", "lock"], ["SAVE", "savePos"], ["LOAD", "loadPos"],
-    ["CHAOS", "chaos"], ["LOW-G", "grav"], ["SPIN", "spin"], ["HELP", "help"]
-  ].forEach(([l, a]) => mkBtn(l, a));
-
-  const mkSlider = (min, max, step, value, format, onInput) => {
+  const mkSlider = (parent, min, max, step, value, format, onInput) => {
     const wrap = document.createElement("div");
-    wrap.style.cssText = "margin-top:8px";
+    wrap.style.cssText = "margin-top:6px;grid-column:span 3";
     const lab = document.createElement("div");
     lab.style.cssText = "margin-bottom:2px;color:#8f8";
     lab.textContent = format(value);
@@ -743,30 +711,55 @@
       onInput(v);
     });
     wrap.appendChild(r);
-    panel.appendChild(wrap);
+    parent.appendChild(wrap);
     return { r, lab, format };
   };
 
-  const boostS = mkSlider(BOOST_MIN, BOOST_MAX, BOOST_STEP, boostKmh,
+  const gNos = section("NOS");
+  mkBtn(gNos, "NOS ON / OFF", "boost", true);
+  const boostS = mkSlider(gNos, BOOST_MIN, BOOST_MAX, BOOST_STEP, boostKmh,
     v => "NOS power: +" + v + " km/h", v => { boostKmh = v; });
-  const jumpS = mkSlider(6, 60, 4, jumpPower,
+
+  const gMove = section("MOVE");
+  mkBtn(gMove, "JUMP", "jump");
+  mkBtn(gMove, "STOP", "stop");
+  mkBtn(gMove, "LOCK", "lock");
+
+  const gDrift = section("DRIFT (GAME)");
+  const driftBtn = mkBtn(gDrift, "DRIFT ON / OFF  (X)", "drift", true);
+  const driftStat = document.createElement("div");
+  driftStat.style.cssText = "grid-column:span 3;color:#8f8;font-size:10px;text-align:center;min-height:14px";
+  driftStat.textContent = "X in free roam";
+  gDrift.appendChild(driftStat);
+
+  const gPos = section("POSITION");
+  mkBtn(gPos, "SAVE", "savePos");
+  mkBtn(gPos, "LOAD", "loadPos");
+  mkBtn(gPos, "HELP", "help");
+
+  const gMore = section("MORE");
+  mkBtn(gMore, "SPIN", "spin");
+  mkBtn(gMore, "LOW-G", "grav");
+  mkBtn(gMore, "HIDE", "panel");
+  const jumpS = mkSlider(gMore, 6, 60, 4, jumpPower,
     v => "Jump power: " + v, v => { jumpPower = v; });
 
   const hint = document.createElement("div");
-  hint.textContent = "P hides · , . jump power";
+  hint.textContent = "Alt = hold NOS · , . jump power";
   hint.style.cssText = "margin-top:8px;text-align:center;color:#666;font-size:9px";
   panel.appendChild(hint);
 
   const paint = (now, force) => {
     if (!force && now < paintAt) return;
     paintAt = now + 120;
+    const d = driftInfo();
 
     if (teleOn) {
       const g = get();
       if (g) {
         const tags = [];
         if (boostOn) tags.push("NOS");
-        if (chaosOn) tags.push("CHAOS");
+        if (d && d.on) tags.push("DRIFT");
         if (gravOn) tags.push("LOW-G");
         if (spinOn) tags.push("SPIN");
         if (locked) tags.push("LOCK");
@@ -780,12 +773,19 @@
     if (panelOn) {
       const states = [
         [pbtn.boost, boostOn], [pbtn.lock, locked],
-        [pbtn.chaos, chaosOn], [pbtn.grav, gravOn], [pbtn.spin, spinOn]
+        [pbtn.grav, gravOn], [pbtn.spin, spinOn]
       ];
       for (const [el, on] of states) {
         el.style.borderColor = on ? "#0f0" : "#555";
         el.style.background = on ? "#063" : "#111";
       }
+      const don = !!(d && d.on);
+      driftBtn.style.borderColor = don ? "#0f0" : "#555";
+      driftBtn.style.background = don ? "#063" : "#111";
+      driftStat.textContent = don
+        ? "x" + (d.level || 1) + "  " + Math.round(d.pend).toLocaleString("en-US") +
+          "  ·  total " + Math.round(d.total).toLocaleString("en-US")
+        : "X in free roam";
       if (document.activeElement !== boostS.r) {
         boostS.r.value = boostKmh;
         boostS.lab.textContent = boostS.format(boostKmh);
@@ -808,15 +808,27 @@
     5: "savePos", 6: "loadPos", 7: "powerDown", 8: "powerUp"
   };
 
+  const typing = () => {
+    if (!u) return false;
+    return (u[0x0083A9C0 >> 2] & 0xff) !== 0 || (u[0x0083A9C4 >> 2] & 0xff) !== 0;
+  };
+
   listen("keydown", e => {
-    if (isAlt(e)) { held = true; e.preventDefault(); return; }
+    if (isAlt(e)) {
+      if (typing()) return;
+      held = true;
+      e.preventDefault();
+      return;
+    }
     if (e.repeat) return;
+    if (e.key === "F9") { e.preventDefault(); return act("panel"); }
+    if (typing()) return;
     if (e.code === "BracketLeft" || e.key === "[" || e.key === "," ||
         e.key === "PageDown" || e.code === "NumpadSubtract" || e.key === "-") return act("jumpDown");
     if (e.code === "BracketRight" || e.key === "]" || e.key === "." ||
         e.key === "PageUp" || e.code === "NumpadAdd" || e.key === "+" || e.key === "=") return act("jumpUp");
     if (e.key.length === 1) {
-      const l = { x: "chaos", g: "grav", z: "spin", p: "panel", t: "tele" }[e.key.toLowerCase()];
+      const l = { z: "spin", t: "tele" }[e.key.toLowerCase()];
       if (l) return act(l);
     }
     for (const k in KEYS) {
@@ -845,7 +857,7 @@
   });
 
   const PAD_MAP = {
-    4: "boost", 5: "jump", 0: "lock", 1: "chaos", 2: "grav", 3: "spin",
+    4: "boost", 5: "jump", 0: "lock", 1: "drift", 2: "grav", 3: "spin",
     12: "powerUp", 13: "powerDown", 14: "savePos", 15: "loadPos"
   };
   const padPrev = {};
@@ -904,5 +916,5 @@
       console.log("[NOS] stopped");
     }
   };
-  console.log("[NOS] running v1.2 (press P for the panel, 0 for controls)");
+  console.log("[NOS] running v1.1 (press F9 for the panel, 0 for controls)");
 })();
