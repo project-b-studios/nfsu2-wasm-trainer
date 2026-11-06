@@ -24,11 +24,10 @@
 - **Position Save & Load:** Coordinate persistence allowing instant state saving and telemetry restoration.
 - **Stop Lock / Hard Stop:** Instant vehicle immobilization and position locking mechanisms.
 - **Jump Mechanic:** Upward velocity vector application for obstacle clearance, with adjustable jump power (6 - 60).
-- **Drift Assist:** Uses the game's own drift mode (**X** in free roam) and keeps the streak alive through wall hits. Every 1,000,000 points are banked automatically and the counter restarts, so long drifts never end.
+- **Drift Assist:** Uses the game's own drift handling and forces it on in every driving mode, not just free roam. Keeps the streak alive through wall hits, and every 1,000,000 points are banked automatically so the counter restarts.
 - **Low Gravity:** Softens falls and keeps the car in the air longer.
 - **Spin:** Rotates the car around its own up axis in place, without flying off or sliding wide.
-- **On-Screen Panel:** Clickable buttons and sliders for every feature — works on touch devices too, no keyboard needed. Toggle with **F9**.
-- **Live Speedometer:** Real-time km/h readout with active mode indicators.
+- **On-Screen Panel:** A compact, draggable trainer window at the top-left with labeled rows, state indicators, and sliders. Toggle with **Insert**; a small **☰ TRAINER** tab brings it back when hidden.
 - **Controller & Keyboard Support:** Dual input handling for standard keyboard layouts and XInput-compatible Gamepads.
 - **Clean HUD Overlay:** Native HTML Popover API implementation ensuring zero external CSS dependencies.
 - **Works on old and new game builds:** Detects both the pre- and post-2026-11-03 player address, so the trainer keeps working after the split-screen update.
@@ -50,12 +49,11 @@
 | **7 / 8** | Decrease / Increase Boost Power (-/+ 50 km/h) |
 | **, / .** or **PgUp / PgDn** | Decrease / Increase Jump Power |
 | **Z** | Toggle Spin |
-| **F9** | Show / Hide On-Screen Panel |
-| **T** | Show / Hide Speedometer |
+| **Insert** | Show / Hide On-Screen Panel |
 | **0** | Show / Hide Help HUD |
 | **Alt (Hold)** | Keep NOS active |
 
-> **X** is the game's own drift toggle in free roam. The trainer does not intercept it — use it exactly as the game intends. The trainer only assists the drift score while the mode is active.
+> **X** is still the game's own drift toggle in free roam, but the trainer's **FORCE DRIFT** is on by default and keeps drift handling active in every driving mode. Toggle it from the panel or with gamepad **B**.
 
 ### Gamepad Layout
 
@@ -64,7 +62,7 @@
 | **LB** | Toggle Boost |
 | **RB** | Jump |
 | **A** | Toggle Stop Lock |
-| **B** | Toggle Drift Mode (same as pressing X) |
+| **B** | Toggle Force Drift |
 | **X** | Toggle Low Gravity |
 | **Y** | Toggle Spin |
 | **D-Pad Left / Right** | Save / Load Position |
@@ -72,7 +70,7 @@
 
 ### On-Screen Panel
 
-The clickable panel in the bottom-right corner has every action plus NOS/jump power sliders, so the trainer is fully usable on phones and tablets without a keyboard. Press **F9** to hide or show it. The panel stays out of the game's pause menu and does not use **P** (the game's pause key).
+The panel starts hidden as a small **☰ TRAINER** tab at the top-left. Click the tab or press **Insert** to open it. Drag the window by its header to move it, and use the **–** button or **Insert** to hide it again. It has state indicators and sliders for every feature, so it is fully usable on phones and tablets. It does not use **P** (the game's pause key) or **F9**.
 
 ---
 
@@ -81,14 +79,14 @@ The clickable panel in the bottom-right corner has every action plus NOS/jump po
 1. Navigate to [nfsu2.xyz](https://nfsu2.xyz) via a WebAssembly-compatible browser.
 2. Open the Developer Console (`F12` or `Ctrl+Shift+I`).
 3. **Inject the contents of `trainer.js` before pressing Play.** The trainer hooks `WebAssembly.Memory`, and the game's memory must be created after the hook is in place.
-4. Press **Play**. The panel and speedometer appear once the car is found.
-5. Use **X** in free roam for the game's drift mode, **F9** for the panel, **Z** for spin.
+4. Press **Play**. A small **☰ TRAINER** tab appears at the top-left; press **Insert** or click the tab to open the panel.
+5. Use **Insert** for the panel, **X** in free roam if you want the game's own drift setup, and **Z** for spin. Force drift is already on by default.
 
 ### Troubleshooting
 
 - **~1 second freeze the first time NOS kicks in:** the game is loading the NOS effect and streaming map assets at high speed. It is not a trainer bug. Lower the boost power with **7** if it bothers you.
 - **Trainer does nothing:** it was injected after the game started. Reload the page and inject it again before pressing Play.
-- **Drift mode does nothing:** drift only works in free roam, not in races or menus.
+- **Drift mode feels too slippery in races:** press the panel's **FORCE DRIFT** row or gamepad **B** to turn it off; **X** still toggles the game's own drift in free roam.
 
 ---
 
@@ -97,12 +95,13 @@ The clickable panel in the bottom-right corner has every action plus NOS/jump po
 ### v1.1
 
 - **Fixed for the 2026-11-03 split-screen update.** The web build moved `PlayersByNumber[0]` from `0x008900AC` to `0x00D00000`. The trainer now detects either address and sanity-checks the pointer chain, so it works on both old and new builds.
-- **Replaced Chaos Mode with the game's own drift mode.** The trainer no longer intercepts **X**. In free roam, **X** (or gamepad **B**) toggles the game's drift handling; the trainer keeps the drift streak alive through wall hits and banks 1,000,000 points at a time so the counter restarts.
+- **Replaced Chaos Mode with the game's own drift handling.** The trainer no longer intercepts **X**. **FORCE DRIFT** is on by default and keeps the game's drift-event switch active in every driving mode, not just free roam; **X** still toggles the game's own drift setup in free roam, and gamepad **B** toggles the force. The trainer keeps the drift streak alive through wall hits and banks 1,000,000 points at a time so the counter restarts.
 - **Rewrote Spin.** The car now rotates around its own up axis in place instead of sliding or launching into the air.
-- **More usable panel.** Redesigned bottom-right layout with labeled sections, larger buttons, grouped actions, and a **F9** toggle. No more conflict with the game's pause menu (**P**).
+- **Rebuilt the panel as a real trainer window.** Compact top-left layout, draggable header, labeled rows with ON/OFF states, grouped sections, and a **☰ TRAINER** tab when hidden. Toggle with **Insert**; **P** (pause) and **F9** are left to the game.
+- **Removed the trainer speedometer.** The game already has one, and the extra readout only cluttered the screen.
 - **Removed the trainer's G shortcut** for low gravity, because **G** toggles the game's headlights. Low gravity remains available from the panel and gamepad **X**.
 - **Typing guard:** trainer hotkeys no longer fire while the game's text entry is open.
-- Adjustable jump power and gamepad bindings for drift, spin, low gravity, save/load, and boost power.
+- Adjustable jump power and gamepad bindings for force drift, spin, low gravity, save/load, and boost power.
 
 ### v1.0
 

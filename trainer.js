@@ -20,9 +20,9 @@
   let upAvg = null;
 
   let gravOn = false, spinOn = false;
-  let jumpPower = 8, panelOn = false, teleOn = true;
+  let jumpPower = 8, panelOn = false;
   let paintAt = 0;
-  let driftPrev = 0, driftBankAt = 0;
+  let driftPrev = 0, driftBankAt = 0, driftForce = true;
 
   const HELP_TEXT = [
     "NOS CONTROLS",
@@ -38,20 +38,19 @@
     "  8  boost power +50 km/h",
     "  , / .  jump power -/+",
     "  PgUp/PgDn  jump power -/+",
+    "  Insert  show/hide panel",
     "  Z  spin on/off",
-    "  F9 show/hide on-screen panel",
-    "  T  show/hide speedometer",
     "  0  show/hide this help",
     "  hold Alt  keep NOS active",
     "",
     "GAME",
-    "  X  drift mode on/off (free roam)",
+    "  X  drift mode (free roam; forced everywhere)",
     "",
     "Gamepad",
     "  LB  boost on/off",
     "  RB  jump",
     "  A   stop lock on/off",
-    "  B   drift mode (X)",
+    "  B   force drift on/off",
     "  X   low gravity",
     "  Y   spin",
     "  D-pad left/right  save/load position",
@@ -101,18 +100,18 @@
   };
 
   const hud = mkBox(8);
+  hud.style.left = "50%";
+  hud.style.transform = "translateX(-50%)";
+  hud.style.textAlign = "center";
   const help = mkBox(52);
   help.textContent = HELP_TEXT;
+  help.style.top = "50%";
+  help.style.left = "50%";
+  help.style.transform = "translate(-50%,-50%)";
+  help.style.maxHeight = "80vh";
+  help.style.overflow = "auto";
   let helpOn = false;
   let hudTimer = 0;
-
-  const tele = mkBox(0);
-  tele.style.top = "auto";
-  tele.style.bottom = "8px";
-  tele.style.left = "8px";
-  tele.style.color = "#3cf";
-  tele.style.font = "bold 18px monospace";
-  tele.textContent = "waiting for car";
 
   const toast = msg => {
     console.log("[NOS] " + msg);
@@ -124,9 +123,9 @@
 
   const refit = () => {
     if (hud.style.display === "block") place(hud);
-    if (teleOn) place(tele);
     if (helpOn) place(help);
     if (panelOn) place(panel);
+    else place(tab);
   };
   listen("fullscreenchange", refit);
   listen("webkitfullscreenchange", refit);
@@ -201,6 +200,9 @@
   };
 
   const driftTick = () => {
+    // The game's own X toggle only works in free roam. Forcing the drift-event
+    // switch keeps the drift physics and scoring on in every driving mode.
+    if (driftForce && u) u[G_FORCEDRIFT >> 2] = 1;
     const d = driftInfo();
     if (!d || !d.on || !d.st) { driftPrev = 0; return; }
     if (d.state === 4) {
@@ -519,8 +521,6 @@
       left: u[(n + 0x41C) >> 2],
       since: u[(n + 0x420) >> 2],
       ticks: u[0x86518C >> 2],
-      speed: speedOf(u, f32, c),
-      hspeed: hspeedOf(u, f32, c),
       up: wUpVec(),
       boostOn,
       boostKmh,
@@ -531,12 +531,6 @@
 
     paint(performance.now());
   }, 8);
-
-  const pressX = () => {
-    const o = { key: "x", code: "KeyX", keyCode: 88, which: 88, bubbles: true, cancelable: true };
-    document.dispatchEvent(new KeyboardEvent("keydown", o));
-    document.dispatchEvent(new KeyboardEvent("keyup", o));
-  };
 
   const act = name => {
     if (name === "help") {
@@ -562,8 +556,13 @@
     }
 
     if (name === "drift") {
-      pressX();
-      toast("Drift: X (free roam)");
+      driftForce = !driftForce;
+      if (!driftForce) {
+        const gg = get();
+        if (gg) gg.u[G_FORCEDRIFT >> 2] = 0;
+      }
+      toast("Force drift " + (driftForce ? "ON" : "OFF"));
+      paint(performance.now(), true);
       return;
     }
 
@@ -571,29 +570,14 @@
       const label = name === "grav" ? "Low gravity" : "Spin";
       let on;
       if (name === "grav") { gravOn = !gravOn; on = gravOn; }
-      else {
-        spinOn = !spinOn;
-        on = spinOn;
-        if (spinOn) {
-          const gg = get();
-          if (gg) jump(gg.u, gg.f32, gg.c, 5);
-        }
-      }
+      else { spinOn = !spinOn; on = spinOn; }
       toast(label + (on ? " ON" : " OFF"));
       paint(performance.now(), true);
       return;
     }
 
     if (name === "panel") {
-      panelOn = !panelOn;
-      if (panelOn) show(panel); else hide(panel);
-      paint(performance.now(), true);
-      return;
-    }
-
-    if (name === "tele") {
-      teleOn = !teleOn;
-      if (teleOn) show(tele); else hide(tele);
+      setPanel(!panelOn);
       return;
     }
 
@@ -648,159 +632,261 @@
   };
 
   const panel = mkBox(0);
-  panel.style.top = "auto";
-  panel.style.right = "10px";
-  panel.style.bottom = "10px";
-  panel.style.left = "auto";
-  panel.style.padding = "10px";
-  panel.style.color = "#0f0";
-  panel.style.background = "rgba(0,0,0,.86)";
-  panel.style.border = "1px solid #0f0";
-  panel.style.borderRadius = "10px";
-  panel.style.font = "bold 11px monospace";
-  panel.style.pointerEvents = "auto";
-  panel.style.width = "268px";
+  panel.style.cssText =
+    "position:fixed;inset:auto;top:12px;left:12px;margin:0;width:292px;max-height:calc(100vh - 24px);" +
+    "overflow:auto;background:rgba(9,11,13,.94);color:#c9d1d9;border:1px solid #2a3037;" +
+    "border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.7);" +
+    "font:12px/1.35 'Segoe UI',system-ui,sans-serif;pointer-events:auto;z-index:2147483647;display:none";
 
-  const panelTitle = document.createElement("div");
-  panelTitle.textContent = "NFSU2 TRAINER v1.1";
-  panelTitle.style.cssText = "text-align:center;letter-spacing:1px;margin-bottom:2px;color:#0f0;font-size:12px";
-  panel.appendChild(panelTitle);
+  const head = document.createElement("div");
+  head.style.cssText =
+    "display:flex;align-items:center;gap:7px;padding:9px 10px;cursor:move;user-select:none;" +
+    "position:sticky;top:0;z-index:1;" +
+    "background:linear-gradient(180deg,#181d23,#101419);border-bottom:1px solid #232a31;" +
+    "border-radius:9px 9px 0 0";
+  const headTitle = document.createElement("div");
+  headTitle.style.cssText = "flex:1;font-weight:700;letter-spacing:.7px;color:#39ff88;font-size:12px";
+  headTitle.textContent = "NFSU2 TRAINER";
+  const headVer = document.createElement("span");
+  headVer.textContent = "v1.1";
+  headVer.style.cssText = "margin-left:6px;color:#5f6a75;font-weight:400;font-size:10px";
+  headTitle.appendChild(headVer);
+  head.appendChild(headTitle);
 
-  const panelSub = document.createElement("div");
-  panelSub.textContent = "F9 panel · X = drift (game)";
-  panelSub.style.cssText = "text-align:center;color:#777;font-size:9px;margin-bottom:4px";
-  panel.appendChild(panelSub);
+  const helpBtn = document.createElement("button");
+  helpBtn.type = "button";
+  helpBtn.textContent = "?";
+  helpBtn.title = "Help (0)";
+  helpBtn.style.cssText = "width:22px;height:22px;padding:0;background:#14181d;color:#8a95a1;border:1px solid #2a3037;border-radius:5px;font:700 11px monospace;cursor:pointer";
+  helpBtn.addEventListener("click", ev => { ev.preventDefault(); act("help"); helpBtn.blur(); });
+  head.appendChild(helpBtn);
+
+  const minBtn = document.createElement("button");
+  minBtn.type = "button";
+  minBtn.textContent = "–";
+  minBtn.title = "Hide panel (Insert)";
+  minBtn.style.cssText = "width:22px;height:22px;padding:0;background:#14181d;color:#8a95a1;border:1px solid #2a3037;border-radius:5px;font:700 13px monospace;cursor:pointer";
+  minBtn.addEventListener("click", ev => { ev.preventDefault(); setPanel(false); minBtn.blur(); });
+  head.appendChild(minBtn);
+  panel.appendChild(head);
+
+  const body = document.createElement("div");
+  body.style.cssText = "padding:8px 10px 10px";
+  panel.appendChild(body);
 
   const pbtn = {};
   const section = title => {
     const h = document.createElement("div");
     h.textContent = title;
-    h.style.cssText = "margin:8px 0 4px;padding-top:6px;border-top:1px solid #243;color:#8f8;font-size:9px;letter-spacing:1px";
-    panel.appendChild(h);
+    h.style.cssText = "margin:10px 0 5px;color:#6f7a86;font-size:9px;font-weight:700;letter-spacing:1.3px";
+    body.appendChild(h);
     const g = document.createElement("div");
-    g.style.cssText = "display:grid;grid-template-columns:repeat(3,1fr);gap:5px";
-    panel.appendChild(g);
+    g.style.cssText = "display:flex;flex-direction:column;gap:4px";
+    body.appendChild(g);
     return g;
   };
-  const mkBtn = (parent, label, action, wide) => {
+
+  const mkRow = (parent, label, action, opts = {}) => {
     const b = document.createElement("button");
-    b.textContent = label;
-    b.style.cssText = "padding:8px 2px;background:#111;color:#0f0;border:1px solid #555;border-radius:5px;font:bold 10px monospace;cursor:pointer" + (wide ? ";grid-column:span 3" : "");
+    b.type = "button";
+    b.style.cssText =
+      "display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;text-align:left;" +
+      "background:#14181d;color:#c9d1d9;border:1px solid #262d34;border-radius:6px;" +
+      "font:600 11px 'Segoe UI',system-ui,sans-serif;cursor:pointer";
+    const lab = document.createElement("span");
+    lab.textContent = label;
+    lab.style.cssText = "flex:1";
+    b.appendChild(lab);
+    if (opts.key) {
+      const k = document.createElement("span");
+      k.textContent = opts.key;
+      k.style.cssText = "color:#59636e;font:10px monospace";
+      b.appendChild(k);
+    }
+    if (opts.state) {
+      const s = document.createElement("span");
+      s.textContent = opts.state;
+      s.style.cssText = "color:#6b7480;font:700 10px monospace;min-width:24px;text-align:right";
+      b._state = s;
+      b.appendChild(s);
+    }
     b.addEventListener("click", ev => { ev.preventDefault(); act(action); b.blur(); });
     parent.appendChild(b);
     pbtn[action] = b;
     return b;
   };
-  const mkSlider = (parent, min, max, step, value, format, onInput) => {
+
+  const setOn = (b, on) => {
+    if (!b) return;
+    b.style.borderColor = on ? "#2f7d4f" : "#262d34";
+    b.style.background = on ? "rgba(24,64,42,.55)" : "#14181d";
+    if (b._state) {
+      b._state.textContent = on ? "ON" : "OFF";
+      b._state.style.color = on ? "#39ff88" : "#6b7480";
+    }
+  };
+
+  const mkSlider = (parent, label, min, max, step, value, format, onInput) => {
     const wrap = document.createElement("div");
-    wrap.style.cssText = "margin-top:6px;grid-column:span 3";
-    const lab = document.createElement("div");
-    lab.style.cssText = "margin-bottom:2px;color:#8f8";
-    lab.textContent = format(value);
-    wrap.appendChild(lab);
+    wrap.style.cssText = "padding:3px 2px 2px";
+    const top = document.createElement("div");
+    top.style.cssText = "display:flex;justify-content:space-between;gap:8px;color:#7f8a96;font-size:10px;margin-bottom:2px";
+    const lab = document.createElement("span");
+    const val = document.createElement("span");
+    val.style.cssText = "color:#aeb8c2;font-family:monospace";
+    top.appendChild(lab);
+    top.appendChild(val);
+    wrap.appendChild(top);
     const r = document.createElement("input");
     r.type = "range";
     r.min = min;
     r.max = max;
     r.step = step;
     r.value = value;
-    r.style.cssText = "width:100%;accent-color:#0f0";
-    r.addEventListener("input", () => {
-      const v = +r.value;
-      lab.textContent = format(v);
-      onInput(v);
-    });
+    r.style.cssText = "width:100%;height:14px;accent-color:#39ff88;cursor:pointer";
+    const sync = v => { lab.textContent = label; val.textContent = format(v); };
+    sync(value);
+    r.addEventListener("input", () => { const v = +r.value; sync(v); onInput(v); });
+    r.addEventListener("change", () => r.blur());
     wrap.appendChild(r);
     parent.appendChild(wrap);
-    return { r, lab, format };
+    return { r, lab, val, format };
   };
 
   const gNos = section("NOS");
-  mkBtn(gNos, "NOS ON / OFF", "boost", true);
-  const boostS = mkSlider(gNos, BOOST_MIN, BOOST_MAX, BOOST_STEP, boostKmh,
-    v => "NOS power: +" + v + " km/h", v => { boostKmh = v; });
+  const boostBtn = mkRow(gNos, "NOS BOOST", "boost", { key: "1", state: "OFF" });
+  const boostS = mkSlider(gNos, "Power", BOOST_MIN, BOOST_MAX, BOOST_STEP, boostKmh,
+    v => "+" + v + " km/h", v => { boostKmh = v; });
 
-  const gMove = section("MOVE");
-  mkBtn(gMove, "JUMP", "jump");
-  mkBtn(gMove, "STOP", "stop");
-  mkBtn(gMove, "LOCK", "lock");
+  const gMove = section("MOVEMENT");
+  mkRow(gMove, "JUMP", "jump", { key: "2" });
+  mkRow(gMove, "HARD STOP", "stop", { key: "3" });
+  const lockBtn = mkRow(gMove, "STOP LOCK", "lock", { key: "4", state: "OFF" });
+  const jumpS = mkSlider(gMove, "Jump power", 6, 60, 4, jumpPower,
+    v => String(v), v => { jumpPower = v; });
 
-  const gDrift = section("DRIFT (GAME)");
-  const driftBtn = mkBtn(gDrift, "DRIFT ON / OFF  (X)", "drift", true);
+  const gDrift = section("DRIFT");
+  const driftBtn = mkRow(gDrift, "FORCE DRIFT", "drift", { state: "ON" });
   const driftStat = document.createElement("div");
-  driftStat.style.cssText = "grid-column:span 3;color:#8f8;font-size:10px;text-align:center;min-height:14px";
-  driftStat.textContent = "X in free roam";
+  driftStat.style.cssText =
+    "padding:6px 8px;margin-top:2px;background:#0d1014;border:1px solid #1f262d;border-radius:5px;" +
+    "color:#6f7a86;font:10px/1.5 monospace;white-space:pre";
+  driftStat.textContent = "waiting for car";
   gDrift.appendChild(driftStat);
 
   const gPos = section("POSITION");
-  mkBtn(gPos, "SAVE", "savePos");
-  mkBtn(gPos, "LOAD", "loadPos");
-  mkBtn(gPos, "HELP", "help");
+  mkRow(gPos, "SAVE POSITION", "savePos", { key: "5" });
+  mkRow(gPos, "LOAD POSITION", "loadPos", { key: "6" });
 
-  const gMore = section("MORE");
-  mkBtn(gMore, "SPIN", "spin");
-  mkBtn(gMore, "LOW-G", "grav");
-  mkBtn(gMore, "HIDE", "panel");
-  const jumpS = mkSlider(gMore, 6, 60, 4, jumpPower,
-    v => "Jump power: " + v, v => { jumpPower = v; });
+  const gMore = section("EXTRAS");
+  mkRow(gMore, "SPIN", "spin", { key: "Z", state: "OFF" });
+  const gravBtn = mkRow(gMore, "LOW GRAVITY", "grav", { state: "OFF" });
 
-  const hint = document.createElement("div");
-  hint.textContent = "Alt = hold NOS · , . jump power";
-  hint.style.cssText = "margin-top:8px;text-align:center;color:#666;font-size:9px";
-  panel.appendChild(hint);
+  const foot = document.createElement("div");
+  foot.textContent = "Insert = hide · drag the header to move";
+  foot.style.cssText = "margin-top:9px;padding-top:7px;border-top:1px solid #1e252c;color:#4f5963;font-size:9px;text-align:center";
+  body.appendChild(foot);
+
+  const tab = document.createElement("button");
+  tab.type = "button";
+  tab.textContent = "☰ TRAINER";
+  tab.title = "Show panel (Insert)";
+  tab.style.cssText =
+    "position:fixed;top:12px;left:12px;z-index:2147483647;padding:7px 10px;" +
+    "background:rgba(9,11,13,.92);color:#39ff88;border:1px solid #2a3037;border-radius:7px;" +
+    "font:700 10px monospace;letter-spacing:.6px;cursor:pointer;display:none;pointer-events:auto";
+  tab.addEventListener("click", ev => { ev.preventDefault(); setPanel(true); });
+  document.body.appendChild(tab);
+
+  const clampPanel = () => {
+    const w = panel.offsetWidth || 292, h = panel.offsetHeight || 400;
+    const x = parseFloat(panel.style.left), y = parseFloat(panel.style.top);
+    const px = Number.isFinite(x) ? x : 12, py = Number.isFinite(y) ? y : 12;
+    panel.style.left = Math.max(0, Math.min(innerWidth - w, px)) + "px";
+    panel.style.top = Math.max(0, Math.min(innerHeight - h, py)) + "px";
+  };
+
+  const setPanel = on => {
+    panelOn = on;
+    if (on) {
+      hide(tab);
+      show(panel);
+      place(panel);
+      clampPanel();
+      paint(performance.now(), true);
+    } else {
+      hide(panel);
+      show(tab);
+      place(tab);
+    }
+  };
+
+  try {
+    const p = JSON.parse(localStorage.getItem("nfsu2TrainerPanel") || "null");
+    if (p && typeof p.left === "number" && typeof p.top === "number") {
+      panel.style.left = p.left + "px";
+      panel.style.top = p.top + "px";
+    }
+  } catch (e) {}
+
+  let drag = null;
+  head.addEventListener("pointerdown", e => {
+    if (e.target.closest("button")) return;
+    const r = panel.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    try { head.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+  });
+  head.addEventListener("pointermove", e => {
+    if (!drag) return;
+    const w = panel.offsetWidth, h = panel.offsetHeight;
+    panel.style.left = Math.max(0, Math.min(innerWidth - w, e.clientX - drag.dx)) + "px";
+    panel.style.top = Math.max(0, Math.min(innerHeight - h, e.clientY - drag.dy)) + "px";
+  });
+  const endDrag = e => {
+    if (!drag) return;
+    drag = null;
+    try { head.releasePointerCapture(e.pointerId); } catch (err) {}
+    try {
+      const left = parseFloat(panel.style.left), top = parseFloat(panel.style.top);
+      localStorage.setItem("nfsu2TrainerPanel", JSON.stringify({
+        left: Number.isFinite(left) ? left : 12,
+        top: Number.isFinite(top) ? top : 12
+      }));
+    } catch (err) {}
+  };
+  head.addEventListener("pointerup", endDrag);
+  head.addEventListener("pointercancel", endDrag);
 
   const paint = (now, force) => {
     if (!force && now < paintAt) return;
     paintAt = now + 120;
     const d = driftInfo();
 
-    if (teleOn) {
-      const g = get();
-      if (g) {
-        const tags = [];
-        if (boostOn) tags.push("NOS");
-        if (d && d.on) tags.push("DRIFT");
-        if (gravOn) tags.push("LOW-G");
-        if (spinOn) tags.push("SPIN");
-        if (locked) tags.push("LOCK");
-        tele.textContent = Math.round(hspeedOf(g.u, g.f32, g.c) * 3.6) + " km/h" +
-          (tags.length ? "   " + tags.join(" ") : "");
-      } else {
-        tele.textContent = "waiting for car";
-      }
-    }
-
     if (panelOn) {
-      const states = [
-        [pbtn.boost, boostOn], [pbtn.lock, locked],
-        [pbtn.grav, gravOn], [pbtn.spin, spinOn]
-      ];
-      for (const [el, on] of states) {
-        el.style.borderColor = on ? "#0f0" : "#555";
-        el.style.background = on ? "#063" : "#111";
-      }
+      setOn(boostBtn, boostOn);
+      setOn(lockBtn, locked);
+      setOn(gravBtn, gravOn);
+      setOn(pbtn.spin, spinOn);
+      setOn(driftBtn, driftForce);
       const don = !!(d && d.on);
-      driftBtn.style.borderColor = don ? "#0f0" : "#555";
-      driftBtn.style.background = don ? "#063" : "#111";
       driftStat.textContent = don
         ? "x" + (d.level || 1) + "  " + Math.round(d.pend).toLocaleString("en-US") +
           "  ·  total " + Math.round(d.total).toLocaleString("en-US")
-        : "X in free roam";
+        : driftForce ? "forcing drift..." : "drift force off";
       if (document.activeElement !== boostS.r) {
         boostS.r.value = boostKmh;
-        boostS.lab.textContent = boostS.format(boostKmh);
+        boostS.val.textContent = boostS.format(boostKmh);
       }
       if (document.activeElement !== jumpS.r) {
         jumpS.r.value = jumpPower;
-        jumpS.lab.textContent = jumpS.format(jumpPower);
+        jumpS.val.textContent = jumpS.format(jumpPower);
       }
     }
   };
 
-  panelOn = true;
-  teleOn = true;
-  show(panel);
-  show(tele);
+  setPanel(false);
+  toast("Trainer ready · Insert for panel");
 
   const KEYS = {
     0: "help",
@@ -821,14 +907,14 @@
       return;
     }
     if (e.repeat) return;
-    if (e.key === "F9") { e.preventDefault(); return act("panel"); }
+    if (e.key === "Insert") { e.preventDefault(); e.stopPropagation(); return act("panel"); }
     if (typing()) return;
     if (e.code === "BracketLeft" || e.key === "[" || e.key === "," ||
         e.key === "PageDown" || e.code === "NumpadSubtract" || e.key === "-") return act("jumpDown");
     if (e.code === "BracketRight" || e.key === "]" || e.key === "." ||
         e.key === "PageUp" || e.code === "NumpadAdd" || e.key === "+" || e.key === "=") return act("jumpUp");
     if (e.key.length === 1) {
-      const l = { z: "spin", t: "tele" }[e.key.toLowerCase()];
+      const l = { z: "spin" }[e.key.toLowerCase()];
       if (l) return act(l);
     }
     for (const k in KEYS) {
@@ -911,10 +997,10 @@
       hud.remove();
       help.remove();
       panel.remove();
-      tele.remove();
+      tab.remove();
       delete window.__nosCheat;
       console.log("[NOS] stopped");
     }
   };
-  console.log("[NOS] running v1.1 (press F9 for the panel, 0 for controls)");
+  console.log("[NOS] running v1.1 (press Insert for the panel, 0 for controls)");
 })();
