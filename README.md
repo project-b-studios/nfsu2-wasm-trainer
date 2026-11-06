@@ -7,7 +7,7 @@
 ![Banner / Preview](https://img.shields.io/badge/Status-Working-success?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/Platform-WebAssembly-orange?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-1.1-brightgreen?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-1.2-brightgreen?style=for-the-badge)
 
 ---
 
@@ -99,6 +99,12 @@ The clickable panel in the bottom-right corner has every action plus NOS/jump po
 - Initial public release: NOS boost, position save/load, stop lock, jump, HUD
 
 ---
+
+## Changelog
+
+### v1.2
+
+- Fixed for the 2026-11-03 split-screen update. The web build moved `PlayersByNumber[0]` from `0x008900AC` to `0x00D00000`; the trainer now detects either address, so it works on both old and new builds.
 
 ## Disclaimer
 

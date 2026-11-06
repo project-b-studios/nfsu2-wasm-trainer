@@ -129,6 +129,21 @@
   listen("fullscreenchange", refit);
   listen("webkitfullscreenchange", refit);
 
+  // The web build moved PlayersByNumber[0] to 0x00D00000 with the
+  // split-screen update (2026-11-03). Older builds used 0x008900AC.
+  const PLAYER_BASES = [0xD00000, 0x8900AC];
+
+  const carAt = base => {
+    if (!base || (base & 3) || base + 8 > buf.byteLength) return 0;
+    const p = u[base >> 2];
+    if (!p || (p & 3) || p + 8 > buf.byteLength) return 0;
+    const c = u[(p + 4) >> 2];
+    if (!c || (c & 3) || c + 0x500 > buf.byteLength) return 0;
+    const x = f32[(c + 0x60) >> 2], y = f32[(c + 0x64) >> 2], z = f32[(c + 0x68) >> 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return 0;
+    return c;
+  };
+
   const get = () => {
     const m = ms.find(x => x.buffer.byteLength >= 1 << 30);
     if (!m) return null;
@@ -140,14 +155,17 @@
       buf = m.buffer;
       u = new Int32Array(buf);
       f32 = new Float32Array(buf);
+      carLogged = false;
     }
-    const p = u[0x8900AC >> 2];
-    if (!p) return null;
-    const c = u[(p + 4) >> 2];
+    let c = 0, base = 0;
+    for (const b of PLAYER_BASES) {
+      c = carAt(b);
+      if (c) { base = b; break; }
+    }
     if (!c) return null;
     if (!carLogged) {
       carLogged = true;
-      console.log("[NOS] car found at 0x" + c.toString(16));
+      console.log("[NOS] car found at 0x" + c.toString(16) + " (player base 0x" + base.toString(16) + ")");
     }
     return { u, f32, c };
   };
@@ -682,7 +700,7 @@
   panel.style.width = "196px";
 
   const panelTitle = document.createElement("div");
-  panelTitle.textContent = "NFSU2 TRAINER v1.1";
+  panelTitle.textContent = "NFSU2 TRAINER v1.2";
   panelTitle.style.cssText = "text-align:center;letter-spacing:1px;margin-bottom:6px;color:#0f0";
   panel.appendChild(panelTitle);
 
@@ -886,5 +904,5 @@
       console.log("[NOS] stopped");
     }
   };
-  console.log("[NOS] running v1.1 (press P for the panel, 0 for controls)");
+  console.log("[NOS] running v1.2 (press P for the panel, 0 for controls)");
 })();
