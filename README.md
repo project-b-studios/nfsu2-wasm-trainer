@@ -87,6 +87,12 @@ The panel starts hidden as a small **☰ TRAINER** tab at the top-left. Click th
 4. Press **Play**. A small **☰ TRAINER** tab appears at the top-left; click it (or press **Insert**) to open the panel.
 5. Use **Z** for spin. In free roam, press **X** for the game's own drift setup; in races and other modes, **X** toggles the trainer's force drift. Click any key badge to rebind it; on a laptop, rebind **TRAINER PANEL** away from **Insert**.
 
+### Install Clip
+
+![Installing the trainer](trainer-in-action.gif)
+
+The clip shows the install: open nfsu2.xyz, press **F12**, paste `trainer.js` into the console, then press **Play**.
+
 ### Troubleshooting
 
 - **~1 second freeze the first time NOS kicks in:** the game is loading the NOS effect and streaming map assets at high speed. It is not a trainer bug. Lower the boost power with **-** if it bothers you.
