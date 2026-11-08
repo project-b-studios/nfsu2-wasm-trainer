@@ -1194,7 +1194,7 @@
   };
 
   setPanel(false);
-  toast("Trainer ready | Insert for panel");
+  toast("Trainer ready | " + codeLabel(BINDS.panel) + " for panel");
 
   const domTyping = () => {
     const a = document.activeElement;
