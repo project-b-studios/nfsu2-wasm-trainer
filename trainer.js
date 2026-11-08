@@ -22,8 +22,7 @@
   let gravOn = false, spinOn = false, spinState = null;
   let jumpPower = 8, panelOn = false;
   let paintAt = 0;
-  let driftPrev = 0, driftBankAt = 0, driftForce = true, driftLostAt = 0;
-  let driftWasRoam = null, driftRoamOn = false;
+  let driftPrev = 0, driftBankAt = 0, driftLostAt = 0, driftNoteAt = 0;
 
   // The game's quick chat uses 1-4 (twice) in free roam, so the trainer's
   // defaults stay on 5-0. Every action can be rebound from the panel.
@@ -140,13 +139,12 @@
     "",
     "GAME",
     "  1-4 twice  quick chat in free roam (left to the game)",
-    "  X  drift: game toggle in free roam, force drift elsewhere",
+    "  X  drift: the game's own toggle in free roam (only there)",
     "",
     "Gamepad",
     "  LB  boost on/off",
     "  RB  jump",
     "  A   stop lock on/off",
-    "  B   force drift on/off",
     "  X   low gravity",
     "  Y   spin",
     "  D-pad left/right  save/load position",
@@ -327,21 +325,9 @@
   };
 
   const driftTick = car => {
-    const roam = inFreeRoam();
-    if (roam) {
-      if (driftWasRoam === false) {
-        // Back from a race: the trainer held the switch on there. Restore
-        // whatever the game's own drift toggle was before the race, so a
-        // stale force doesn't leave free roam permanently drifting.
-        u[G_FORCEDRIFT >> 2] = driftRoamOn ? 1 : 0;
-      }
-      driftRoamOn = u[G_FORCEDRIFT >> 2] !== 0;
-    }
-    driftWasRoam = roam;
-    // The game's own X toggle only works in free roam. Outside free roam,
-    // forcing the drift-event switch keeps the drift physics and scoring on.
-    // In free roam, X stays the game's own drift toggle, so don't fight it.
-    if (driftForce && inWorld() && !roam) u[G_FORCEDRIFT >> 2] = 1;
+    // Drift is the game's own X toggle in free roam. The trainer only reads
+    // the switch; writing G_FORCEDRIFT outside the game's drift mode makes the
+    // style-points branch use a stale pointer and the WASM build crashes.
     const d = driftInfo(car);
     if (!d || !d.on || !d.st) { driftPrev = 0; driftLostAt = 0; return; }
     const now = performance.now();
@@ -554,9 +540,6 @@
 
   const iv = setInterval(() => {
     const g = get();
-    // Set the switch even when the car pointer is not ready yet (a respawn,
-    // a race loading): the next car is then built with drift handling on.
-    if (u && driftForce && inWorld() && !inFreeRoam()) u[G_FORCEDRIFT >> 2] = 1;
     if (!g) return;
     const f32 = g.f32, c = g.c, n = c + 0x40;
 
@@ -744,18 +727,6 @@
     if (name === "jumpUp" || name === "jumpDown") {
       jumpPower = Math.max(6, Math.min(60, jumpPower + (name === "jumpUp" ? 4 : -4)));
       toast("Jump power: " + jumpPower);
-      paint(performance.now(), true);
-      return;
-    }
-
-    if (name === "drift") {
-      driftForce = !driftForce;
-      if (!driftForce) {
-        const gg = get();
-        // In free roam the game's X owns this switch; leave it alone there.
-        if (gg && !inFreeRoam()) gg.u[G_FORCEDRIFT >> 2] = 0;
-      }
-      toast("Force drift " + (driftForce ? "ON" : "OFF"));
       paint(performance.now(), true);
       return;
     }
@@ -1060,7 +1031,6 @@
     v => String(v), v => { jumpPower = v; }, ["jumpDown", "jumpUp"]);
 
   const gDrift = section("DRIFT");
-  const driftBtn = mkRow(gDrift, "FORCE DRIFT", "drift", { state: "ON" });
   const driftStat = document.createElement("div");
   driftStat.style.cssText =
     "padding:6px 8px;margin-top:2px;background:#0d1014;border:1px solid #1f262d;border-radius:5px;" +
@@ -1188,14 +1158,13 @@
       setOn(lockBtn, locked);
       setOn(gravBtn, gravOn);
       setOn(pbtn.spin, spinOn);
-      setOn(driftBtn, driftForce);
       const don = !!(d && d.on);
       driftStat.textContent = don
         ? "x" + (d.level || 1) + "  " + Math.round(d.pend).toLocaleString("en-US") +
           "  |  total " + Math.round(d.total).toLocaleString("en-US")
-        : driftForce
-          ? (inFreeRoam() ? "free roam: press X for drift" : "forcing drift...")
-          : "drift force off";
+        : inFreeRoam()
+          ? "free roam: press X for the game's drift"
+          : "drift is free roam only";
       if (document.activeElement !== boostS.r) {
         boostS.r.value = boostKmh;
         boostS.val.textContent = boostS.format(boostKmh);
@@ -1282,13 +1251,20 @@
       e.stopImmediatePropagation();
       return act(bound);
     }
-    // X is the game's own drift toggle in free roam. Elsewhere it would only
-    // show "Drift mode only works in free roam", so use it for force drift.
+    // X is the game's own drift toggle in free roam. Elsewhere the game would
+    // only show "Drift mode only works in free roam"; swallow it instead.
+    // Never force the drift switch outside free roam: the game's style-points
+    // branch then uses a stale pointer and the WASM build crashes.
     if (code === "KeyX") {
-      if (inFreeRoam()) return;
+      if (!inWorld() || inFreeRoam()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      return act("drift");
+      const now = performance.now();
+      if (now - driftNoteAt > 2000) {
+        driftNoteAt = now;
+        toast("Drift is free roam only");
+      }
+      return;
     }
   });
 
@@ -1314,7 +1290,7 @@
   });
 
   const PAD_MAP = {
-    4: "boost", 5: "jump", 0: "lock", 1: "drift", 2: "grav", 3: "spin",
+    4: "boost", 5: "jump", 0: "lock", 2: "grav", 3: "spin",
     12: "powerUp", 13: "powerDown", 14: "savePos", 15: "loadPos"
   };
   const padPrev = {};
