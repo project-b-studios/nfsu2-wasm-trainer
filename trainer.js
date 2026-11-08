@@ -33,12 +33,13 @@
     lock: "Digit8",
     savePos: "Digit9",
     loadPos: "Digit0",
-    powerDown: "BracketLeft",
-    powerUp: "BracketRight",
+    powerDown: "Minus",
+    powerUp: "Equal",
     jumpDown: "Comma",
     jumpUp: "Period",
     spin: "KeyZ",
-    help: "KeyK"
+    help: "KeyK",
+    panel: "Insert"
   };
   const BIND_ACTIONS = [
     ["boost", "NOS BOOST"],
@@ -52,7 +53,8 @@
     ["jumpDown", "JUMP POWER -"],
     ["jumpUp", "JUMP POWER +"],
     ["spin", "SPIN"],
-    ["help", "HELP"]
+    ["help", "HELP"],
+    ["panel", "TRAINER PANEL"]
   ];
   const BIND_LABEL = Object.fromEntries(BIND_ACTIONS);
   const BINDS = { ...DEFAULT_BINDS };
@@ -130,7 +132,7 @@
     "  " + codeLabel(BINDS.loadPos) + "  load position",
     "  " + codeLabel(BINDS.powerDown) + " / " + codeLabel(BINDS.powerUp) + "  boost power -/+ 50 km/h",
     "  " + codeLabel(BINDS.jumpDown) + " / " + codeLabel(BINDS.jumpUp) + "  jump power -/+",
-    "  Insert  show/hide panel",
+    "  " + codeLabel(BINDS.panel) + "  show/hide panel",
     "  " + codeLabel(BINDS.spin) + "  spin on/off",
     "  " + codeLabel(BINDS.help) + "  show/hide this help",
     "  hold Alt  keep NOS active",
@@ -270,6 +272,7 @@
   const G_FORCEDRIFT = 0x00890104, G_RACE = 0x00890118;
   const G_FLOW = 0x008654A4, G_RACEKIND = 0x0089E7B0;
   const G_CAREER_RACE = 0x00863470, G_GAMEMODE = 0x00850078;
+  const G_RACEFLAGS = 0x0089E7D8; // byte +1 is G_DRIFTRACE
 
   const inWorld = () => !!(u && u[G_FLOW >> 2] === 6);
 
@@ -282,6 +285,7 @@
       (u[(r + 0x24) >> 2] | 0) === 1 &&
       u[G_CAREER_RACE >> 2] === 0 &&
       u[G_RACEKIND >> 2] === 0 &&
+      ((u[G_RACEFLAGS >> 2] >>> 8) & 0xFF) === 0 &&
       (u[G_GAMEMODE >> 2] & 0x208) === 0;
   };
 
@@ -811,7 +815,7 @@
 
   const panel = mkBox(0);
   panel.style.cssText =
-    "position:fixed;inset:auto;top:12px;left:12px;margin:0;width:292px;max-height:calc(100vh - 24px);" +
+    "position:fixed;inset:auto;top:12px;left:12px;margin:0;width:min(292px,calc(100vw - 24px));max-height:calc(100vh - 24px);" +
     "overflow:auto;background:rgba(9,11,13,.94);color:#c9d1d9;border:1px solid #2a3037;" +
     "border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.7);" +
     "font:12px/1.35 'Segoe UI',system-ui,sans-serif;pointer-events:auto;z-index:2147483647;display:none";
@@ -871,6 +875,9 @@
     }
     help.textContent = helpText();
     helpBtn.title = "Help (" + codeLabel(BINDS.help) + ")";
+    minBtn.title = "Hide panel (" + codeLabel(BINDS.panel) + ")";
+    if (tab) tab.title = "Show panel (" + codeLabel(BINDS.panel) + ")";
+    if (foot) foot.textContent = codeLabel(BINDS.panel) + " = hide | drag the header to move";
   };
 
   const cancelRebind = () => {
@@ -1064,8 +1071,8 @@
     toast("Key bindings reset");
     resetKeys.blur();
   });
+  mkRow(gKeys, "TRAINER PANEL", "panel", { bind: "panel" });
   gKeys.appendChild(resetKeys);
-  updateBindBadges();
 
   const foot = document.createElement("div");
   foot.textContent = "Insert = hide | drag the header to move";
@@ -1075,13 +1082,15 @@
   const tab = document.createElement("button");
   tab.type = "button";
   tab.textContent = "☰ TRAINER";
-  tab.title = "Show panel (Insert)";
+  tab.title = "Show panel (" + codeLabel(BINDS.panel) + ")";
+  tab.setAttribute("popover", "manual");
   tab.style.cssText =
-    "position:fixed;top:12px;left:12px;z-index:2147483647;padding:7px 10px;" +
+    "position:fixed;inset:auto;top:12px;left:12px;margin:0;z-index:2147483647;padding:9px 12px;" +
     "background:rgba(9,11,13,.92);color:#39ff88;border:1px solid #2a3037;border-radius:7px;" +
-    "font:700 10px monospace;letter-spacing:.6px;cursor:pointer;display:none;pointer-events:auto";
+    "font:700 11px monospace;letter-spacing:.6px;cursor:pointer;display:none;pointer-events:auto";
   tab.addEventListener("click", ev => { ev.preventDefault(); setPanel(true); });
   document.body.appendChild(tab);
+  updateBindBadges();
 
   const clampPanel = () => {
     const w = panel.offsetWidth || 292, h = panel.offsetHeight || 400;
@@ -1210,7 +1219,6 @@
   };
 
   const RESERVED_BINDS = {
-    Insert: "Insert is reserved for the panel",
     Escape: "Escape is reserved for the game menu",
     KeyP: "P is the game's pause key",
     F9: "F9 is reserved"
@@ -1219,7 +1227,7 @@
   listen("keydown", e => {
     if (rebindAction) {
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       if (e.key === "Escape") { cancelRebind(); return; }
       const code = eventCode(e);
       if (isModifierCode(code) || isAlt(e)) return;
@@ -1236,12 +1244,13 @@
     }
     if (e.repeat) return;
     if (typing()) return;
-    if (e.key === "Insert") { e.preventDefault(); e.stopPropagation(); return act("panel"); }
     const code = eventCode(e);
     const bound = actionFor(code);
     if (bound) {
       e.preventDefault();
-      e.stopPropagation();
+      // The game's input listens on window too. stopImmediatePropagation keeps
+      // it from seeing trainer keys (and from showing its own drift error).
+      e.stopImmediatePropagation();
       return act(bound);
     }
     // X is the game's own drift toggle in free roam. Elsewhere it would only
@@ -1249,7 +1258,7 @@
     if (code === "KeyX") {
       if (inFreeRoam()) return;
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       return act("drift");
     }
   });
@@ -1335,5 +1344,5 @@
       console.log("[NOS] stopped");
     }
   };
-  console.log("[NOS] running v1.1 (press Insert for the panel, " + codeLabel(BINDS.help) + " for controls)");
+  console.log("[NOS] running v1.1 (press " + codeLabel(BINDS.panel) + " for the panel, " + codeLabel(BINDS.help) + " for controls)");
 })();
