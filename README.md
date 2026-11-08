@@ -24,7 +24,7 @@ Trainer for **nfsu2.xyz**. It hooks `WebAssembly.Memory` before the game starts 
 - **Drift:** the game's own **X** toggle in free roam. The trainer keeps the pending streak through wall hits and banks 1,000,000 points at a time. It does not force the drift switch in races or outruns; the game's style-points branch then uses a stale pointer and the WASM build crashes.
 - **Low gravity:** reduces downward velocity while falling.
 - **Spin:** holds the car at its current position and turns it around the world's vertical axis.
-- **Barrel roll:** holds the car at its current position and turns it around its own forward axis. It can run together with spin.
+- **Barrel roll:** holds the car at its current position and turns it around its own forward axis. It can run together with spin. Turning it off puts the car back on its wheels, so the camera does not stay tilted.
 - **Showoff:** turns on the game's hydraulics and alternates **H** and **J**, writes tyre slip for the game's smoke effect, pulses the nitrous state for exhaust flames, and cycles the game's own **O** hood/trunk/door showoff while parked in free roam. Hydraulics and the **O** parts need free roam and low speed; the smoke and flames also work outside it.
 - **Career:** shows the bank and adds $100,000 or $1,000,000. It can open the five base garage slots and set the 32 bonus-part/cover-shoot flags. These buttons work only in career mode.
 - **Rebindable keys:** click a key badge in the panel and press a new key. Bindings are saved in the browser. A key already in use is swapped, and **RESET KEY BINDINGS** restores the defaults. The defaults avoid the game's **1-4** quick-chat keys.

@@ -495,8 +495,11 @@
     if (!upAvg) return [0, 1, 0];
     const a = upAvg.map(Math.abs);
     const i = a[0] >= a[1] && a[0] >= a[2] ? 0 : a[1] >= a[2] ? 1 : 2;
+    // The world's up axis never flips. Deriving its sign from the car's
+    // averaged up vector made spin and the barrel-roll leveling turn upside
+    // down after a roll.
     const v = [0, 0, 0];
-    v[i] = upAvg[i] >= 0 ? 1 : -1;
+    v[i] = 1;
     return v;
   };
 
@@ -709,6 +712,45 @@
     }
     f32[(c + 0x42C) >> 2] = 0;
     f32[(c + 0x430) >> 2] = 0;
+  };
+
+  // A barrel roll leaves the car's up vector rotated. The game's camera reads
+  // that vector, so the screen would stay tilted after the roll is turned off.
+  // Rebuild the frame upright, keeping the car's current heading.
+  const levelCar = (f32, c, rb) => {
+    const f0 = vecAt(f32, c, 0x90);
+    const fl = Math.hypot(f0[0], f0[1], f0[2]);
+    if (!Number.isFinite(fl) || fl < 0.0001) return;
+    const f = [f0[0] / fl, f0[1] / fl, f0[2] / fl];
+    const w = wUpVec();
+    let l = [
+      w[1] * f[2] - w[2] * f[1],
+      w[2] * f[0] - w[0] * f[2],
+      w[0] * f[1] - w[1] * f[0]
+    ];
+    let ll = Math.hypot(l[0], l[1], l[2]);
+    if (!Number.isFinite(ll) || ll < 0.0001) {
+      // The car points straight up or down: keep its current left vector.
+      const l0 = vecAt(f32, c, 0xA0);
+      ll = Math.hypot(l0[0], l0[1], l0[2]);
+      if (!Number.isFinite(ll) || ll < 0.0001) return;
+      l = [l0[0] / ll, l0[1] / ll, l0[2] / ll];
+    } else {
+      l = [l[0] / ll, l[1] / ll, l[2] / ll];
+    }
+    const up = [
+      f[1] * l[2] - f[2] * l[1],
+      f[2] * l[0] - f[0] * l[2],
+      f[0] * l[1] - f[1] * l[0]
+    ];
+    putVec(f32, c, 0x90, f);
+    putVec(f32, c, 0xA0, l);
+    putVec(f32, c, 0xB0, up);
+    if (rb) {
+      putVec(f32, rb, 0x30, f);
+      putVec(f32, rb, 0x40, l);
+      putVec(f32, rb, 0x50, up);
+    }
   };
 
   const startShowoff = g => {
@@ -985,7 +1027,18 @@
       let on;
       if (name === "grav") { gravOn = !gravOn; on = gravOn; }
       else if (name === "spin") { spinOn = !spinOn; on = spinOn; }
-      else { barrelOn = !barrelOn; on = barrelOn; }
+      else {
+        const was = barrelOn;
+        barrelOn = !barrelOn;
+        on = barrelOn;
+        // Put the car back on its wheels when the roll ends. Without this the
+        // game camera keeps the rolled angle because the car's up vector is
+        // still tilted.
+        if (was && !barrelOn) {
+          const g = get();
+          if (g) levelCar(g.f32, g.c, rbOf(g.u, g.c));
+        }
+      }
       toast(label + (on ? " ON" : " OFF"));
       paint(performance.now(), true);
       return;
