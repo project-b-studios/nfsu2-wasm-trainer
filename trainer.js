@@ -23,6 +23,7 @@
   let jumpPower = 8, panelOn = false;
   let paintAt = 0;
   let driftPrev = 0, driftBankAt = 0, driftForce = true, driftLostAt = 0;
+  let driftWasRoam = null, driftRoamOn = false;
 
   // The game's quick chat uses 1-4 (twice) in free roam, so the trainer's
   // defaults stay on 5-0. Every action can be rebound from the panel.
@@ -326,10 +327,21 @@
   };
 
   const driftTick = car => {
+    const roam = inFreeRoam();
+    if (roam) {
+      if (driftWasRoam === false) {
+        // Back from a race: the trainer held the switch on there. Restore
+        // whatever the game's own drift toggle was before the race, so a
+        // stale force doesn't leave free roam permanently drifting.
+        u[G_FORCEDRIFT >> 2] = driftRoamOn ? 1 : 0;
+      }
+      driftRoamOn = u[G_FORCEDRIFT >> 2] !== 0;
+    }
+    driftWasRoam = roam;
     // The game's own X toggle only works in free roam. Outside free roam,
     // forcing the drift-event switch keeps the drift physics and scoring on.
     // In free roam, X stays the game's own drift toggle, so don't fight it.
-    if (driftForce && inWorld() && !inFreeRoam()) u[G_FORCEDRIFT >> 2] = 1;
+    if (driftForce && inWorld() && !roam) u[G_FORCEDRIFT >> 2] = 1;
     const d = driftInfo(car);
     if (!d || !d.on || !d.st) { driftPrev = 0; driftLostAt = 0; return; }
     const now = performance.now();

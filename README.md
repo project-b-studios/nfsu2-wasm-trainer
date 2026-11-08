@@ -28,7 +28,7 @@
 - **Low Gravity:** Softens falls and keeps the car in the air longer.
 - **Spin:** Holds the car at its current position and continuously rotates it around the world's vertical axis, so it spins in place instead of sliding or launching.
 - **Rebindable Hotkeys:** Click any key badge in the panel and press a new key. The binding is saved in the browser; a key already in use swaps with the old one, and **RESET KEY BINDINGS** restores the defaults. Defaults avoid the game's **1-4** quick-chat keys, and the panel key itself can be moved off **Insert** for laptops.
-- **On-Screen Panel:** A compact, draggable trainer window at the top-left with labeled rows, state indicators, and sliders. Toggle with **Insert**; a small **☰ TRAINER** tab brings it back when hidden.
+- **On-Screen Panel:** A compact, draggable trainer window at the top-left with labeled rows, state indicators, and sliders. Toggle with **Insert** (rebindable); a small **☰ TRAINER** tab brings it back when hidden, and the whole panel works with a mouse or touchpad only.
 - **Controller & Keyboard Support:** Dual input handling for standard keyboard layouts and XInput-compatible Gamepads.
 - **Clean HUD Overlay:** Native HTML Popover API implementation ensuring zero external CSS dependencies.
 - **Works on old and new game builds:** Detects both the pre- and post-2026-11-03 player address, so the trainer keeps working after the split-screen update.
