@@ -47,7 +47,7 @@
 | **8** | Toggle Stop Lock ON/OFF |
 | **9** | Save Position |
 | **0** | Load Position |
-| **- / =** | Decrease / Increase Boost Power (-/+ 50 km/h) |
+| **- / =** | Decrease / Increase Boost Power (-/+ 50 km/h; **Num - / Num +** also work) |
 | **, / .** | Decrease / Increase Jump Power |
 | **Z** | Toggle Spin |
 | **K** | Show / Hide Help HUD |
@@ -75,7 +75,7 @@
 
 ### On-Screen Panel
 
-The panel starts hidden as a small **☰ TRAINER** tab at the top-left. Click the tab or press **Insert** to open it. Drag the window by its header to move it, and use the **–** button or the panel key to hide it again. It has state indicators, clickable sliders, and a key badge for every action, so it is fully usable with only a mouse or touchpad. It does not use **P** (the game's pause key) or **F9**.
+The panel starts hidden as a small **☰ TRAINER** tab at the top-left. Click the tab or press **Insert** to open it. Drag the window by its header to move it, and use the **–** button or the panel key to hide it again. It has state indicators, clickable sliders with **− / +** step buttons, and a key badge for every action, so it is fully usable with only a mouse or touchpad. It does not use **P** (the game's pause key) or **F9**.
 
 ---
 

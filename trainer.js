@@ -1012,8 +1012,22 @@
     top.appendChild(val);
     if (binds) {
       const keys = document.createElement("span");
-      keys.style.cssText = "display:flex;gap:3px;margin-left:auto";
+      keys.style.cssText = "display:flex;gap:3px;margin-left:auto;align-items:center";
       for (const action of binds) keys.appendChild(mkBindBadge(action));
+      // Mouse/touchpad fallback: laptops without -/= or with a layout that
+      // hides them can step the value without any keyboard at all.
+      for (const [action, text] of [[binds[0], "−"], [binds[1], "+"]]) {
+        const step = document.createElement("button");
+        step.type = "button";
+        step.textContent = text;
+        step.title = (text === "−" ? "Decrease " : "Increase ") + label.toLowerCase();
+        step.style.cssText =
+          "width:18px;height:18px;padding:0;background:#0d1014;color:#8a95a1;" +
+          "border:1px solid #2a3037;border-radius:4px;font:700 12px monospace;" +
+          "line-height:1;cursor:pointer";
+        step.addEventListener("click", ev => { ev.preventDefault(); act(action); step.blur(); });
+        keys.appendChild(step);
+      }
       top.appendChild(keys);
     }
     wrap.appendChild(top);
@@ -1227,6 +1241,9 @@
     if (exact) return exact;
     if (/^Digit[0-9]$/.test(code)) return exactAction("Numpad" + code.slice(5));
     if (/^Numpad[0-9]$/.test(code)) return exactAction("Digit" + code.slice(6));
+    // Numpad +/- mirrors the -/= power keys on keyboards that have a numpad.
+    if (code === "NumpadAdd") return exactAction("Equal");
+    if (code === "NumpadSubtract") return exactAction("Minus");
     return null;
   };
 
