@@ -10,7 +10,7 @@
   };
 
   let last = {}, memLogged = false, carLogged = false;
-  let buf = null, u = null, f32 = null;
+  let buf = null, u = null, f32 = null, u8 = null;
 
   let boostOn = false, boostBase = 0, boostKmh = 100;
   const BOOST_STEP = 50, BOOST_MIN = 50, BOOST_MAX = 500;
@@ -19,7 +19,10 @@
   let savedPos = null, loadState = null, loadUntil = 0, saveScan = null;
   let upAvg = null;
 
-  let gravOn = false, spinOn = false, spinState = null;
+  let gravOn = false, spinOn = false, barrelOn = false, airState = null;
+  let showoffOn = false, showoffAt = 0, showoffStep = 0, showoffPrev = null;
+  let showoffPartsAt = 0, showoffSaved = null;
+  let synthKeys = 0;
   let jumpPower = 8, panelOn = false;
   let paintAt = 0;
   let driftPrev = 0, driftBankAt = 0, driftLostAt = 0, driftNoteAt = 0;
@@ -38,6 +41,8 @@
     jumpDown: "Comma",
     jumpUp: "Period",
     spin: "KeyZ",
+    barrel: "KeyU",
+    showoff: "KeyY",
     help: "KeyK",
     panel: "Insert"
   };
@@ -53,6 +58,8 @@
     ["jumpDown", "JUMP POWER -"],
     ["jumpUp", "JUMP POWER +"],
     ["spin", "SPIN"],
+    ["barrel", "BARREL ROLL"],
+    ["showoff", "SHOWOFF"],
     ["help", "HELP"],
     ["panel", "TRAINER PANEL"]
   ];
@@ -134,12 +141,17 @@
     "  " + codeLabel(BINDS.jumpDown) + " / " + codeLabel(BINDS.jumpUp) + "  jump power -/+",
     "  " + codeLabel(BINDS.panel) + "  show/hide panel",
     "  " + codeLabel(BINDS.spin) + "  spin on/off",
+    "  " + codeLabel(BINDS.barrel) + "  barrel roll on/off",
+    "  " + codeLabel(BINDS.showoff) + "  showoff on/off (hydraulics, smoke, flames)",
     "  " + codeLabel(BINDS.help) + "  show/hide this help",
     "  hold Alt  keep NOS active",
     "",
     "GAME",
     "  1-4 twice  quick chat in free roam (left to the game)",
     "  X  drift: the game's own toggle in free roam (only there)",
+    "",
+    "CAREER (panel buttons)",
+    "  add money, open the 5 base garage slots, unlock bonus parts",
     "",
     "Gamepad",
     "  LB  boost on/off",
@@ -250,6 +262,7 @@
       buf = m.buffer;
       u = new Int32Array(buf);
       f32 = new Float32Array(buf);
+      u8 = new Uint8Array(buf);
       carLogged = false;
     }
     let c = 0, base = 0;
@@ -262,7 +275,7 @@
       carLogged = true;
       console.log("[NOS] car found at 0x" + c.toString(16) + " (player base 0x" + base.toString(16) + ")");
     }
-    return { u, f32, c };
+    return { u, f32, u8, c };
   };
 
   // Drift mode in free roam is the game's own: X toggles it (runtime/drift.c).
@@ -272,6 +285,16 @@
   const G_FLOW = 0x008654A4, G_RACEKIND = 0x0089E7B0;
   const G_CAREER_RACE = 0x00863470, G_GAMEMODE = 0x00850078;
   const G_RACEFLAGS = 0x0089E7D8; // byte +1 is G_DRIFTRACE
+
+  // Career and garage fields, checked against the web build's career.c and
+  // garage.c. The bank is a u32; the garage's first five slots sit at
+  // CARS0 + 0x5954, 0x7F8 bytes each, with R_LOCKED at +0x7F4.
+  const G_CAREER = 0x0085AD40, GARAGE = 0x0083AD90;
+  const CAREER_BANK = 0x7134, CAREER_OPEN = 0x7148;
+  const GARAGE_SLOTS = 0x5954, GARAGE_REC = 0x7F8, GARAGE_COUNT = 5;
+  const R_LOCKED = 0x7F4;
+  const G_HYD_LEVEL = 0x007E949C, G_HYD_ON = 0x007E94A0;
+  const CAR_NOS = 0x40, CAR_SLIP = 0x3B4, CAR_GROUND = 0x390, CAR_SURF = 0x394;
 
   const inWorld = () => !!(u && u[G_FLOW >> 2] === 6);
 
@@ -286,6 +309,72 @@
       u[G_RACEKIND >> 2] === 0 &&
       ((u[G_RACEFLAGS >> 2] >>> 8) & 0xFF) === 0 &&
       (u[G_GAMEMODE >> 2] & 0x208) === 0;
+  };
+
+  const inCareer = () => !!(u && (u[G_GAMEMODE >> 2] & 1) !== 0);
+
+  const careerBank = () => {
+    if (!u || !buf || !inCareer()) return null;
+    const a = G_CAREER + CAREER_BANK;
+    if (a + 4 > buf.byteLength) return null;
+    return u[a >> 2] >>> 0;
+  };
+
+  const addMoney = amount => {
+    if (!u || !buf) return toast("Game not ready");
+    if (!inCareer()) return toast("Career mode only");
+    const a = G_CAREER + CAREER_BANK;
+    if (a + 4 > buf.byteLength) return toast("Career data not found");
+    const cur = u[a >> 2] >>> 0;
+    const next = Math.min(999999999, cur + amount);
+    u[a >> 2] = next;
+    toast("Bank: $" + next.toLocaleString("en-US"));
+    paint(performance.now(), true);
+  };
+
+  const unlockGarage = () => {
+    if (!u || !buf || !u8) return toast("Game not ready");
+    if (!inCareer()) return toast("Career mode only");
+    let n = 0;
+    for (let i = 0; i < GARAGE_COUNT; i++) {
+      const r = GARAGE + GARAGE_SLOTS + i * GARAGE_REC;
+      if (r + R_LOCKED + 1 > buf.byteLength) continue;
+      if (u8[r + R_LOCKED]) {
+        u8[r + R_LOCKED] = 0;
+        n++;
+      }
+    }
+    toast(n ? "Opened " + n + " of the 5 base garage slots" : "The 5 base garage slots are already open");
+  };
+
+  const unlockBonus = () => {
+    if (!u || !buf || !u8) return toast("Game not ready");
+    if (!inCareer()) return toast("Career mode only");
+    const a = G_CAREER + CAREER_OPEN;
+    if (a + 32 > buf.byteLength) return toast("Career data not found");
+    for (let i = 0; i < 32; i++) u8[a + i] = 1;
+    toast("Bonus parts and cover shoots unlocked");
+  };
+
+  // The game reads its own key events from window. Synthetic events let the
+  // trainer use the game's hydraulics and showoff without guessing physics
+  // fields. The trainer's own listener ignores events marked __nosSynth.
+  const synthKey = (type, code, key) => {
+    try {
+      if (typeof KeyboardEvent !== "function") return;
+      const e = new KeyboardEvent(type, {
+        code, key: key || code, bubbles: true, cancelable: true
+      });
+      try { e.__nosSynth = true; } catch (err) {}
+      // The game's input layer listens on window; dispatching on the canvas
+      // (when there is one) still reaches window through bubbling, and also
+      // covers a build that attached the listener to the canvas itself.
+      const target = (document.querySelector && (document.querySelector("canvas") || document.body)) || window;
+      if (!target || typeof target.dispatchEvent !== "function") return;
+      synthKeys++;
+      try { target.dispatchEvent(e); }
+      finally { synthKeys--; }
+    } catch (err) {}
   };
 
   // The racers are sorted by position at race +0xBD0. In a race the player is
@@ -525,18 +614,217 @@
     }
     f32[(c + 0x42C) >> 2] = 0;
     f32[(c + 0x430) >> 2] = 0;
-    if (lockState)
-      for (let i = 0; i < 3; i++) {
-        f32[(c + 0x60 + 4 * i) >> 2] = lockState.p[i];
-        f32[(c + 0x50 + 4 * i) >> 2] = lockState.com[i];
-        f32[(c + 0x90 + 4 * i) >> 2] = lockState.f[i];
-        f32[(c + 0xa0 + 4 * i) >> 2] = lockState.l[i];
-        f32[(c + 0xb0 + 4 * i) >> 2] = lockState.u[i];
+    if (lockState) {
+      const st = lockState;
+      // Deadband: let physics settle within 5 mm instead of snapping the car
+      // every 8 ms. The render body is pinned every tick because the camera
+      // reads that position, not the physics position.
+      const dx = f32[(c + 0x60) >> 2] - st.p[0];
+      const dy = f32[(c + 0x64) >> 2] - st.p[1];
+      const dz = f32[(c + 0x68) >> 2] - st.p[2];
+      if (dx * dx + dy * dy + dz * dz > 0.000025) {
+        putVec(f32, c, 0x60, st.p);
+        putVec(f32, c, 0x50, st.com);
       }
+      if (!spinOn && !barrelOn) {
+        const f = vecAt(f32, c, 0x90);
+        if (dot(f, st.f) < 0.9999) {
+          putVec(f32, c, 0x90, st.f);
+          putVec(f32, c, 0xA0, st.l);
+          putVec(f32, c, 0xB0, st.u);
+        }
+      }
+      putVec(f32, rb, 0x20, st.p);
+      if (!spinOn && !barrelOn) {
+        putVec(f32, rb, 0x30, st.f);
+        putVec(f32, rb, 0x40, st.l);
+        putVec(f32, rb, 0x50, st.u);
+      }
+    }
     if (!quiet) console.log("[NOS] stop");
   };
 
   const hardStop = (u, f32, c) => stopCar(u, f32, c, false);
+
+  // Spin and barrel roll share one held pose. Spin turns the frame around the
+  // world's up axis; barrel roll turns it around the car's own forward axis.
+  // With both on, the spin is applied first and the roll follows the new
+  // forward axis, so the two combine instead of overwriting each other.
+  const airTick = (u, f32, c, rb) => {
+    if (!spinOn && !barrelOn) {
+      airState = null;
+      return;
+    }
+    if (!airState || airState.car !== c) {
+      airState = {
+        car: c,
+        p: vecAt(f32, c, 0x60),
+        off: [
+          f32[(c + 0x60) >> 2] - f32[(c + 0x50) >> 2],
+          f32[(c + 0x64) >> 2] - f32[(c + 0x54) >> 2],
+          f32[(c + 0x68) >> 2] - f32[(c + 0x58) >> 2]
+        ],
+        rb,
+        rbP: rb ? vecAt(f32, rb, 0x20) : null
+      };
+    }
+    const st = airState;
+    if (rb && st.rb !== rb) {
+      st.rb = rb;
+      st.rbP = vecAt(f32, rb, 0x20);
+    }
+    const up = wUpVec();
+    if (spinOn) {
+      const ang = 0.06;
+      for (const off of [0x90, 0xA0, 0xB0])
+        putVec(f32, c, off, rot(vecAt(f32, c, off), up, ang));
+      if (st.rb)
+        for (const off of [0x30, 0x40, 0x50])
+          putVec(f32, st.rb, off, rot(vecAt(f32, st.rb, off), up, ang));
+      st.off = rot(st.off, up, ang);
+    }
+    if (barrelOn) {
+      let fwd = vecAt(f32, c, 0x90);
+      const len = Math.hypot(fwd[0], fwd[1], fwd[2]);
+      if (!Number.isFinite(len) || len < 0.0001) fwd = [1, 0, 0];
+      else fwd = [fwd[0] / len, fwd[1] / len, fwd[2] / len];
+      const ang = 0.08;
+      for (const off of [0x90, 0xA0, 0xB0])
+        putVec(f32, c, off, rot(vecAt(f32, c, off), fwd, ang));
+      if (st.rb)
+        for (const off of [0x30, 0x40, 0x50])
+          putVec(f32, st.rb, off, rot(vecAt(f32, st.rb, off), fwd, ang));
+      st.off = rot(st.off, fwd, ang);
+    }
+    putVec(f32, c, 0x60, st.p);
+    putVec(f32, c, 0x50, [
+      st.p[0] - st.off[0],
+      st.p[1] - st.off[1],
+      st.p[2] - st.off[2]
+    ]);
+    if (st.rb) putVec(f32, st.rb, 0x20, st.rbP || st.p);
+    for (const [base, off] of [[c, 0x70], [c, 0x110], [st.rb, 0x70], [st.rb, 0x80], [st.rb, 0xA0], [st.rb, 0xC0]]) {
+      if (!base) continue;
+      for (let i = 0; i < 3; i++) f32[(base + off + 4 * i) >> 2] = 0;
+    }
+    f32[(c + 0x42C) >> 2] = 0;
+    f32[(c + 0x430) >> 2] = 0;
+  };
+
+  const startShowoff = g => {
+    const { u, f32, u8, c } = g;
+    if (showoffSaved) stopShowoff(g);
+    const st = {
+      car: c,
+      hydLevel: u[G_HYD_LEVEL >> 2],
+      hydOn: u8[G_HYD_ON],
+      slip: [],
+      ground: [],
+      surf: [],
+      nos: [
+        u[(c + CAR_NOS + 0x414) >> 2],
+        u[(c + CAR_NOS + 0x41C) >> 2],
+        u[(c + CAR_NOS + 0x420) >> 2]
+      ]
+    };
+    for (let i = 0; i < 8; i++) st.slip.push(f32[(c + CAR_SLIP + 4 * i) >> 2]);
+    for (let i = 0; i < 4; i++) {
+      st.ground.push(u8[c + CAR_GROUND + i]);
+      st.surf.push(u[(c + CAR_SURF + 4 * i) >> 2]);
+    }
+    showoffSaved = st;
+    u[G_HYD_LEVEL >> 2] = 2;
+    u8[G_HYD_ON] = 1;
+    showoffOn = true;
+    showoffAt = 0;
+    showoffStep = 0;
+    showoffPartsAt = 0;
+    if (showoffPrev) {
+      synthKey("keyup", showoffPrev.code, showoffPrev.key);
+      showoffPrev = null;
+    }
+  };
+
+  const stopShowoff = g => {
+    if (showoffPrev) {
+      synthKey("keyup", showoffPrev.code, showoffPrev.key);
+      showoffPrev = null;
+    }
+    showoffOn = false;
+    const st = showoffSaved;
+    showoffSaved = null;
+    if (!st) return;
+    if (u && u8) {
+      u[G_HYD_LEVEL >> 2] = st.hydLevel;
+      u8[G_HYD_ON] = st.hydOn;
+    }
+    if (!g || !u || !f32 || !u8 || g.c !== st.car) return;
+    const c = g.c;
+    for (let i = 0; i < 8; i++) f32[(c + CAR_SLIP + 4 * i) >> 2] = st.slip[i] || 0;
+    for (let i = 0; i < 4; i++) {
+      u8[c + CAR_GROUND + i] = st.ground[i] || 0;
+      u[(c + CAR_SURF + 4 * i) >> 2] = st.surf[i] || 0;
+    }
+    u[(c + CAR_NOS + 0x414) >> 2] = st.nos[0];
+    u[(c + CAR_NOS + 0x41C) >> 2] = st.nos[1];
+    u[(c + CAR_NOS + 0x420) >> 2] = 0;
+  };
+
+  const showoffTick = (now, g) => {
+    if (!showoffOn || !showoffSaved) return;
+    const { u, f32, u8, c } = g;
+    if (c !== showoffSaved.car) {
+      stopShowoff(g);
+      return;
+    }
+    const speed = speedOf(u, f32, c);
+    // Tyre smoke: the game's effects update reads CAR_SLIP every frame. Only
+    // write it while the car is nearly stopped, so a moving car's handling is
+    // never touched.
+    if (speed <= 3.0) {
+      for (let i = 0; i < 4; i++) {
+        f32[(c + CAR_SLIP + 8 * i) >> 2] = 6.5;
+        f32[(c + CAR_SLIP + 8 * i + 4) >> 2] = 2.0;
+        u8[c + CAR_GROUND + i] = 1;
+        u[(c + CAR_SURF + 4 * i) >> 2] = 0;
+      }
+    }
+    // Exhaust flame: pulse the nitrous state unless the player is already
+    // using NOS, in which case leave it on.
+    const tick = u[0x86518C >> 2];
+    if (boostOn || held || (now % 600) < 380) {
+      u[(c + CAR_NOS + 0x414) >> 2] = 40000;
+      u[(c + CAR_NOS + 0x41C) >> 2] = 40000;
+      u[(c + CAR_NOS + 0x420) >> 2] = tick || 1;
+    } else {
+      u[(c + CAR_NOS + 0x420) >> 2] = 0;
+    }
+    // The game starts hydraulics 0.22 s after H or J if the car is at 10 mph
+    // or less. Hold one, then the other. The O key cycles the game's own
+    // hood/trunk/door showoff while parked in free roam.
+    const canKeys = inWorld() && !typing() && !rebindAction;
+    const canHyd = canKeys && speed <= 4.4;
+    if (canHyd) {
+      if (now >= showoffAt) {
+        if (showoffPrev) synthKey("keyup", showoffPrev.code, showoffPrev.key);
+        showoffPrev = (showoffStep % 2) === 0
+          ? { code: "KeyH", key: "h" }
+          : { code: "KeyJ", key: "j" };
+        synthKey("keydown", showoffPrev.code, showoffPrev.key);
+        showoffAt = now + 900;
+        showoffStep++;
+      }
+      if (inFreeRoam() && speed <= 1.0 && now >= showoffPartsAt) {
+        synthKey("keydown", "KeyO", "o");
+        synthKey("keyup", "KeyO", "o");
+        showoffPartsAt = now + 2400;
+      }
+    } else if (showoffPrev) {
+      synthKey("keyup", showoffPrev.code, showoffPrev.key);
+      showoffPrev = null;
+      showoffAt = now + 500;
+    }
+  };
 
   const iv = setInterval(() => {
     const g = get();
@@ -567,6 +855,8 @@
       const s = u[(n + 0x420) >> 2];
       if (s && s !== 0x7fffffff) u[(n + 0x420) >> 2] = u[0x86518C >> 2];
     }
+
+    showoffTick(performance.now(), g);
 
     if (boostOn) {
       const w = wUpVec();
@@ -617,51 +907,7 @@
         f32[(c + 0x430) >> 2] = ns;
       }
 
-      if (spinOn) {
-        // Spin in place: hold the car's position and yaw its frame around the
-        // world's vertical axis every tick. The game's world is Z-up, so
-        // wUpVec() is [0,0,1] here (and [0,1,0] on a Y-up build).
-        if (!spinState || spinState.car !== c) {
-          spinState = {
-            car: c,
-            p: vecAt(f32, c, 0x60),
-            off: [
-              f32[(c + 0x60) >> 2] - f32[(c + 0x50) >> 2],
-              f32[(c + 0x64) >> 2] - f32[(c + 0x54) >> 2],
-              f32[(c + 0x68) >> 2] - f32[(c + 0x58) >> 2]
-            ],
-            rb,
-            rbP: rb ? vecAt(f32, rb, 0x20) : null
-          };
-        }
-        const st = spinState;
-        const axis = wUpVec();
-        const ang = 0.06;
-        for (const off of [0x90, 0xA0, 0xB0]) {
-          putVec(f32, c, off, rot(vecAt(f32, c, off), axis, ang));
-        }
-        if (st.rb) {
-          for (const off of [0x30, 0x40, 0x50]) {
-            putVec(f32, st.rb, off, rot(vecAt(f32, st.rb, off), axis, ang));
-          }
-        }
-        st.off = rot(st.off, axis, ang);
-        putVec(f32, c, 0x60, st.p);
-        putVec(f32, c, 0x50, [
-          st.p[0] - st.off[0],
-          st.p[1] - st.off[1],
-          st.p[2] - st.off[2]
-        ]);
-        if (st.rb) putVec(f32, st.rb, 0x20, st.rbP || st.p);
-        for (const [base, off] of [[c, 0x70], [c, 0x110], [rb, 0x70], [rb, 0x80], [rb, 0xA0], [rb, 0xC0]]) {
-          if (!base) continue;
-          for (let i = 0; i < 3; i++) f32[(base + off + 4 * i) >> 2] = 0;
-        }
-        f32[(c + 0x42C) >> 2] = 0;
-        f32[(c + 0x430) >> 2] = 0;
-      } else if (spinState) {
-        spinState = null;
-      }
+      airTick(u, f32, c, rb);
     }
 
     if (loadState) {
@@ -700,6 +946,9 @@
       up: wUpVec(),
       boostOn,
       boostKmh,
+      showoffOn,
+      spinOn,
+      barrelOn,
       hasSavedPos: !!savedPos,
       slots: savedPos && savedPos.slots ? savedPos.slots.length : 0,
       locked
@@ -731,13 +980,27 @@
       return;
     }
 
-    if (name === "grav" || name === "spin") {
-      const label = name === "grav" ? "Low gravity" : "Spin";
+    if (name === "grav" || name === "spin" || name === "barrel") {
+      const label = name === "grav" ? "Low gravity" : name === "spin" ? "Spin" : "Barrel roll";
       let on;
       if (name === "grav") { gravOn = !gravOn; on = gravOn; }
-      else { spinOn = !spinOn; on = spinOn; }
+      else if (name === "spin") { spinOn = !spinOn; on = spinOn; }
+      else { barrelOn = !barrelOn; on = barrelOn; }
       toast(label + (on ? " ON" : " OFF"));
       paint(performance.now(), true);
+      return;
+    }
+
+    if (name === "money100" || name === "money1m") {
+      addMoney(name === "money100" ? 100000 : 1000000);
+      return;
+    }
+    if (name === "unlockGarage") {
+      unlockGarage();
+      return;
+    }
+    if (name === "unlockBonus") {
+      unlockBonus();
       return;
     }
 
@@ -749,6 +1012,18 @@
     const g = get();
     if (!g) return;
     const u = g.u, f32 = g.f32, c = g.c;
+
+    if (name === "showoff") {
+      if (showoffOn) {
+        stopShowoff(g);
+        toast("Showoff OFF");
+      } else {
+        startShowoff(g);
+        toast("Showoff ON (parked: hydraulics, smoke, flames)");
+      }
+      paint(performance.now(), true);
+      return;
+    }
 
     if (name === "boost") {
       boostOn = !boostOn;
@@ -1042,8 +1317,24 @@
   mkRow(gPos, "SAVE POSITION", "savePos", { bind: "savePos" });
   mkRow(gPos, "LOAD POSITION", "loadPos", { bind: "loadPos" });
 
+  const gStunt = section("STUNTS");
+  mkRow(gStunt, "SHOWOFF", "showoff", { bind: "showoff", state: "OFF" });
+  mkRow(gStunt, "BARREL ROLL", "barrel", { bind: "barrel", state: "OFF" });
+  mkRow(gStunt, "SPIN", "spin", { bind: "spin", state: "OFF" });
+
+  const gCareer = section("CAREER");
+  const careerStat = document.createElement("div");
+  careerStat.style.cssText =
+    "padding:6px 8px;margin-top:2px;background:#0d1014;border:1px solid #1f262d;border-radius:5px;" +
+    "color:#6f7a86;font:10px/1.5 monospace;white-space:pre";
+  careerStat.textContent = "career mode only";
+  gCareer.appendChild(careerStat);
+  mkRow(gCareer, "ADD $100,000", "money100");
+  mkRow(gCareer, "ADD $1,000,000", "money1m");
+  mkRow(gCareer, "UNLOCK 5 BASE GARAGE SLOTS", "unlockGarage");
+  mkRow(gCareer, "UNLOCK BONUS PARTS", "unlockBonus");
+
   const gMore = section("EXTRAS");
-  mkRow(gMore, "SPIN", "spin", { bind: "spin", state: "OFF" });
   const gravBtn = mkRow(gMore, "LOW GRAVITY", "grav", { state: "OFF" });
   mkRow(gMore, "HELP", "help", { bind: "help" });
 
@@ -1158,6 +1449,12 @@
       setOn(lockBtn, locked);
       setOn(gravBtn, gravOn);
       setOn(pbtn.spin, spinOn);
+      setOn(pbtn.barrel, barrelOn);
+      setOn(pbtn.showoff, showoffOn);
+      const bank = careerBank();
+      careerStat.textContent = bank == null
+        ? "career mode only"
+        : "Bank: $" + bank.toLocaleString("en-US");
       const don = !!(d && d.on);
       driftStat.textContent = don
         ? "x" + (d.level || 1) + "  " + Math.round(d.pend).toLocaleString("en-US") +
@@ -1223,6 +1520,7 @@
   };
 
   listen("keydown", e => {
+    if (synthKeys || e.__nosSynth) return;
     if (rebindAction) {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -1269,6 +1567,7 @@
   });
 
   listen("keyup", e => {
+    if (synthKeys || e.__nosSynth) return;
     if (!isAlt(e)) return;
     held = false;
     if (typing()) return;
@@ -1340,6 +1639,11 @@
       clearInterval(iv);
       clearInterval(padIv);
       clearTimeout(hudTimer);
+      if (showoffOn) {
+        const g = get();
+        if (g) stopShowoff(g);
+        else stopShowoff(null);
+      }
       offs.forEach(fn => fn());
       hud.remove();
       help.remove();
