@@ -20,6 +20,8 @@
   let upAvg = null;
 
   let gravOn = false, spinOn = false, barrelOn = false, airState = null;
+  let antiFlipOn = true, driftAssistOn = false;
+  let driftAssistCar = 0, driftAssistPo = 0, driftAssistSaved = null;
   let showoffOn = false, showoffAt = 0, showoffStep = 0, showoffPrev = null;
   let showoffPartsAt = 0, showoffSaved = null;
   let synthKeys = 0;
@@ -145,6 +147,10 @@
     "  " + codeLabel(BINDS.showoff) + "  showoff on/off (hydraulics, smoke, flames)",
     "  " + codeLabel(BINDS.help) + "  show/hide this help",
     "  hold Alt  keep NOS active",
+    "",
+    "PANEL",
+    "  ANTI-FLIP  keep the car from staying upside down after a wall hit",
+    "  DRIFT ASSIST  lower rear grip in every mode (no drift score/camera)",
     "",
     "GAME",
     "  1-4 twice  quick chat in free roam (left to the game)",
@@ -753,6 +759,87 @@
     }
   };
 
+  // Wall hits at boost speed can pitch or roll the car over. While the car is
+  // tilted past about 57 degrees, turn its frame back towards the world's up
+  // and damp the spin that keeps it over. Spin and barrel roll own the frame
+  // while they are on.
+  const antiFlipTick = (f32, c, rb) => {
+    if (!antiFlipOn || spinOn || barrelOn || locked) return;
+    const w = wUpVec();
+    const up0 = vecAt(f32, c, 0xB0);
+    const ul = Math.hypot(up0[0], up0[1], up0[2]);
+    if (!Number.isFinite(ul) || ul < 0.1) return;
+    const up = [up0[0] / ul, up0[1] / ul, up0[2] / ul];
+    const d = dot(up, w);
+    if (d > 0.55) return;
+    let axis = [
+      up[1] * w[2] - up[2] * w[1],
+      up[2] * w[0] - up[0] * w[2],
+      up[0] * w[1] - up[1] * w[0]
+    ];
+    let al = Math.hypot(axis[0], axis[1], axis[2]);
+    if (!Number.isFinite(al) || al < 0.001) {
+      // Exactly upside down: roll around the car's forward axis.
+      const f0 = vecAt(f32, c, 0x90);
+      const fl = Math.hypot(f0[0], f0[1], f0[2]);
+      if (!Number.isFinite(fl) || fl < 0.001) return;
+      axis = [f0[0] / fl, f0[1] / fl, f0[2] / fl];
+    } else {
+      axis = [axis[0] / al, axis[1] / al, axis[2] / al];
+    }
+    const ang = Math.min(0.07, 0.025 + (0.55 - d) * 0.09);
+    for (const off of [0x90, 0xA0, 0xB0])
+      putVec(f32, c, off, rot(vecAt(f32, c, off), axis, ang));
+    if (rb)
+      for (const off of [0x30, 0x40, 0x50])
+        putVec(f32, rb, off, rot(vecAt(f32, rb, off), axis, ang));
+    for (const [base, off] of [[c, 0x110], [rb, 0x80], [rb, 0xC0]]) {
+      if (!base) continue;
+      for (let i = 0; i < 3; i++) f32[(base + off + 4 * i) >> 2] *= 0.7;
+    }
+  };
+
+  // A race-safe drift assist: the game's own drift switch only exists in free
+  // roam and forcing it in a race crashes the WASM build. This lowers the rear
+  // wheels' grip factor (the same field the game's drift assist changes) so the
+  // car slides in any mode, without the game's drift camera or score.
+  const restoreDriftAssist = f32 => {
+    if (!driftAssistSaved) return;
+    const live = u && driftAssistCar && u[(driftAssistCar + 0x34) >> 2] === driftAssistPo;
+    if (live && f32) {
+      for (const s of driftAssistSaved) {
+        if (s.addr + 4 <= buf.byteLength) f32[s.addr >> 2] = s.value;
+      }
+    }
+    driftAssistSaved = null;
+    driftAssistCar = 0;
+    driftAssistPo = 0;
+  };
+
+  const driftAssistTick = (u, f32, c) => {
+    if (!driftAssistOn) {
+      if (driftAssistSaved) restoreDriftAssist(f32);
+      return;
+    }
+    if (!inWorld() || spinOn || barrelOn) return;
+    const d = driftInfo(c);
+    if (d && d.on) return; // free roam's own drift already changes the grip
+    const po = u[(c + 0x34) >> 2] >>> 0;
+    if (!po || po + 0x48 > buf.byteLength) return;
+    if (driftAssistPo && driftAssistPo !== po) restoreDriftAssist(f32);
+    if (!driftAssistSaved) driftAssistSaved = [];
+    driftAssistCar = c;
+    driftAssistPo = po;
+    for (const off of [0x40, 0x44]) {
+      const w = u[(po + off) >> 2] >>> 0;
+      if (!w || w + 0x18C > buf.byteLength) continue;
+      const a = w + 0x188;
+      if (!driftAssistSaved.some(s => s.addr === a))
+        driftAssistSaved.push({ addr: a, value: f32[a >> 2] });
+      f32[a >> 2] = 0.86;
+    }
+  };
+
   const startShowoff = g => {
     const { u, f32, u8, c } = g;
     if (showoffSaved) stopShowoff(g);
@@ -874,6 +961,7 @@
     const f32 = g.f32, c = g.c, n = c + 0x40;
 
     driftTick(c);
+    driftAssistTick(u, f32, c);
 
     {
       const up = [f32[(c + 0xB0) >> 2], f32[(c + 0xB4) >> 2], f32[(c + 0xB8) >> 2]];
@@ -952,6 +1040,8 @@
       airTick(u, f32, c, rb);
     }
 
+    antiFlipTick(f32, c, rbOf(u, c));
+
     if (loadState) {
       if (performance.now() < loadUntil) {
         writeSlots(u, f32, c, loadState);
@@ -991,6 +1081,8 @@
       showoffOn,
       spinOn,
       barrelOn,
+      antiFlipOn,
+      driftAssistOn,
       hasSavedPos: !!savedPos,
       slots: savedPos && savedPos.slots ? savedPos.slots.length : 0,
       locked
@@ -1004,6 +1096,24 @@
       helpOn = !helpOn;
       if (helpOn) show(help);
       else hide(help);
+      return;
+    }
+
+    if (name === "antiFlip") {
+      antiFlipOn = !antiFlipOn;
+      toast("Anti-flip " + (antiFlipOn ? "ON" : "OFF"));
+      paint(performance.now(), true);
+      return;
+    }
+
+    if (name === "driftAssist") {
+      driftAssistOn = !driftAssistOn;
+      if (!driftAssistOn) {
+        const g = get();
+        restoreDriftAssist(g ? g.f32 : null);
+      }
+      toast("Drift assist " + (driftAssistOn ? "ON" : "OFF"));
+      paint(performance.now(), true);
       return;
     }
 
@@ -1365,6 +1475,11 @@
     "color:#6f7a86;font:10px/1.5 monospace;white-space:pre";
   driftStat.textContent = "waiting for car";
   gDrift.appendChild(driftStat);
+  mkRow(gDrift, "DRIFT ASSIST (ALL MODES)", "driftAssist", { state: "OFF" });
+  const driftHint = document.createElement("div");
+  driftHint.textContent = "Lowers rear grip so the car slides in races too. No drift score or drift camera outside free roam.";
+  driftHint.style.cssText = "color:#5f6a75;font-size:9px;line-height:1.45;padding:2px 2px 0";
+  gDrift.appendChild(driftHint);
 
   const gPos = section("POSITION");
   mkRow(gPos, "SAVE POSITION", "savePos", { bind: "savePos" });
@@ -1374,6 +1489,7 @@
   mkRow(gStunt, "SHOWOFF", "showoff", { bind: "showoff", state: "OFF" });
   mkRow(gStunt, "BARREL ROLL", "barrel", { bind: "barrel", state: "OFF" });
   mkRow(gStunt, "SPIN", "spin", { bind: "spin", state: "OFF" });
+  mkRow(gStunt, "ANTI-FLIP", "antiFlip", { state: "ON" });
 
   const gCareer = section("CAREER");
   const careerStat = document.createElement("div");
@@ -1504,6 +1620,8 @@
       setOn(pbtn.spin, spinOn);
       setOn(pbtn.barrel, barrelOn);
       setOn(pbtn.showoff, showoffOn);
+      setOn(pbtn.antiFlip, antiFlipOn);
+      setOn(pbtn.driftAssist, driftAssistOn);
       const bank = careerBank();
       careerStat.textContent = bank == null
         ? "career mode only"
