@@ -30,6 +30,7 @@ Trainer for **nfsu2.xyz**. It hooks `WebAssembly.Memory` before the game starts 
 - **Career:** shows the bank and adds $100,000 or $1,000,000. It can open the five base garage slots and set the 32 bonus-part/cover-shoot flags. These buttons work only in career mode.
 - **Rebindable keys:** click a key badge in the panel and press a new key. Bindings are saved in the browser. A key already in use is swapped, and **RESET KEY BINDINGS** restores the defaults. The defaults avoid the game's **1-4** quick-chat keys.
 - **Panel:** compact window at the top-left, hidden by default. Open it with the **☰ TRAINER** tab or the panel key (**Insert** by default). Drag it by the header.
+- **Screenshot mode:** **F8** hides the panel, the tab, the help and the toast. Press it again to restore them. Rebindable in the **KEYS** section.
 - **Typing guard:** trainer keys do not fire while the game's text entry or a focused text field is open.
 - **Both player addresses:** works with the old `0x008900AC` player base and the post-2026-11-03 `0x00D00000` base.
 
@@ -54,6 +55,7 @@ Trainer for **nfsu2.xyz**. It hooks `WebAssembly.Memory` before the game starts 
 | **Y** | Toggle showoff |
 | **K** | Show/hide help |
 | **Insert** | Show/hide panel |
+| **F8** | Hide the panel and tab for screenshots |
 | **Alt (hold)** | Keep NOS active |
 
 These are the defaults. Click a key badge in the panel to rebind any action. Bindings persist in the browser. **P** (pause), **Esc** and **F9** are reserved.
@@ -80,7 +82,7 @@ Barrel roll, showoff, hydraulic dance, anti-flip, drift assist and career are on
 
 ### Panel
 
-The panel starts hidden as a **☰ TRAINER** tab. Click the tab or press **Insert** to open it. The **–** button or the panel key hides it again. Sliders have **− / +** buttons, so the trainer can be used with a mouse or touchpad only.
+The panel starts hidden as a **☰ TRAINER** tab. Click the tab or press **Insert** to open it. The **–** button or the panel key hides it again. **F8** hides the panel, the tab, the help and the toast for a clean screenshot; press it again to bring them back. It can be rebound in the **KEYS** section. Sliders have **− / +** buttons, so the trainer can be used with a mouse or touchpad only.
 
 ---
 
@@ -140,7 +142,7 @@ No. The trainer runs in your browser and only changes the game's local memory. T
 ### v1.1
 
 - **Fixed for the 2026-11-03 split-screen update.** The web build moved `PlayersByNumber[0]` from `0x008900AC` to `0x00D00000`. The trainer detects either address and checks the pointer chain.
-- **Drift in every mode.** In free roam, **X** is the game's own toggle; the trainer keeps the pending points and the multiplier through wall hits and banks 1,000,000 points at a time. Outside free roam, **X** toggles **DRIFT ASSIST (ALL MODES)**, which lowers the rear wheels' grip factor so the car slides in races too. The assist stays on through wall hits. Forcing the game's drift switch in a race makes the style-points branch use a stale pointer and crash, so the trainer never does that; the assist has no drift score or drift camera outside free roam.
+- **Drift in every mode.** In free roam, **X** is the game's own toggle; the trainer keeps the pending points and the multiplier through wall hits, undoes a crash bank, and banks 1,000,000 points at a time. Outside free roam, **X** toggles **DRIFT ASSIST (ALL MODES)**, which lowers the rear wheels' grip factor so the car slides in races too. The assist stays on through wall hits. Forcing the game's drift switch in a race makes the style-points branch use a stale pointer and crash, so the trainer never does that; the assist has no drift score or drift camera outside free roam.
 - **Anti-flip added.** A high-speed wall hit no longer leaves the car upside down. The car is turned back towards the world's up and the spin is damped. On by default, with a panel toggle.
 - **Stop lock no longer shakes the camera.** It uses a 5 mm position deadband, a 0.8-degree orientation deadband, and pins the render body's position and orientation.
 - **Spin and barrel roll share one held pose.** Spin turns around the world's vertical axis; barrel roll turns around the car's forward axis. With both on, spin is applied first and the roll follows the new forward axis.
@@ -148,6 +150,7 @@ No. The trainer runs in your browser and only changes the game's local memory. T
 - **Career controls added.** Bank display, +$100,000, +$1,000,000, five base garage slots, and the 32 bonus-part/cover-shoot flags.
 - **Rebindable hotkeys.** Click any key badge, press a new key, and the binding is saved. A key already in use swaps with the old one. **RESET KEY BINDINGS** restores the defaults. Defaults avoid **1-4**, and the panel key can be moved off **Insert**.
 - **Panel rebuilt.** Compact top-left layout, draggable header, ON/OFF states, grouped sections, and the **☰ TRAINER** tab. **P** and **F9** are left to the game.
+- **Screenshot key added.** **F8** hides the panel, the tab, the help and the toast; press it again to restore them. Rebindable in the **KEYS** section.
 - **Speedometer removed.** The game already has one.
 - **Low gravity moved off G.** **G** toggles the game's headlights; low gravity is on the panel and gamepad **X**.
 - **Typing guard.** Trainer keys do not fire while text entry is open.

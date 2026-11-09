@@ -26,9 +26,11 @@
   let hydShowoffOn = false, hydAt = 0, hydStep = 0, hydPrev = null, hydSaved = null, hydEngaged = false;
   let synthKeys = 0;
   let jumpPower = 8, panelOn = false;
+  let uiHidden = false;
   let paintAt = 0;
   let driftPrev = 0, driftBankAt = 0, driftLostAt = 0;
-  let driftLevel = 0, driftGain = 0;
+  let driftLevel = 0, driftGain = 0, driftCrashAt = 0, driftTotalSeen = 0;
+  let driftMarkPrev = false;
 
   // The game's quick chat uses 1-4 (twice) in free roam, so the trainer's
   // defaults stay on 5-0. Every action can be rebound from the panel.
@@ -47,7 +49,8 @@
     barrel: "KeyU",
     showoff: "KeyY",
     help: "KeyK",
-    panel: "Insert"
+    panel: "Insert",
+    shot: "F8"
   };
   const BIND_ACTIONS = [
     ["boost", "NOS BOOST"],
@@ -64,7 +67,8 @@
     ["barrel", "BARREL ROLL"],
     ["showoff", "SHOWOFF"],
     ["help", "HELP"],
-    ["panel", "TRAINER PANEL"]
+    ["panel", "TRAINER PANEL"],
+    ["shot", "HIDE UI (SCREENSHOT)"]
   ];
   const BIND_LABEL = Object.fromEntries(BIND_ACTIONS);
   const BINDS = { ...DEFAULT_BINDS };
@@ -150,6 +154,7 @@
     "  hold Alt  keep NOS active",
     "",
     "PANEL",
+    "  " + codeLabel(BINDS.shot) + "  hide the panel and tab for screenshots",
     "  HYDRAULIC DANCE  the game's H/J hydraulics (parked; off resets the body)",
     "  ANTI-FLIP  keep the car from staying upside down after a wall hit",
     "  DRIFT ASSIST  lower rear grip in every mode (no drift score/camera)",
@@ -230,6 +235,7 @@
   const toast = msg => {
     console.log("[NOS] " + msg);
     hud.textContent = msg;
+    if (uiHidden) return;
     show(hud);
     clearTimeout(hudTimer);
     hudTimer = setTimeout(() => hide(hud), 1500);
@@ -426,19 +432,36 @@
     // the switch; writing G_FORCEDRIFT outside the game's drift mode makes the
     // style-points branch use a stale pointer and the WASM build crashes.
     const d = driftInfo(car);
+    const now = performance.now();
+    // The car's crash mark (car + 0x38) is set by the game's physics on a wall
+    // hit. While it is set, the game can zero the pending points and the
+    // multiplier; the trainer keeps them and undoes a crash bank.
+    const mark = u8 && car + 0x38 < buf.byteLength ? u8[car + 0x38] : 0;
+    const crashed = !!mark;
+    if (crashed && !driftMarkPrev) console.log("[NOS] drift: crash mark " + mark + " (state " + (d ? d.state : -1) + ")");
+    driftMarkPrev = crashed;
+    if (crashed || (d && d.state === 4)) driftCrashAt = now;
+    const recentCrash = crashed || (driftCrashAt > 0 && now - driftCrashAt < 1500);
+    const recentBankCrash = crashed || (driftCrashAt > 0 && now - driftCrashAt < 600);
     if (!d || !d.on || !d.st) {
+      // A crash can null the style pointer for a frame or two. Keep the last
+      // points for the grace window so they can go into the new style.
+      if (recentCrash && driftPrev > 0) return;
       driftPrev = 0;
       driftLostAt = 0;
       driftLevel = 0;
       driftGain = 0;
+      driftCrashAt = 0;
+      driftTotalSeen = 0;
       return;
     }
-    const now = performance.now();
-    // Keep the multiplier across a wall hit too, not just the pending points.
     const dcOk = d.dc && !(d.dc & 3) && d.dc + 0x24 <= buf.byteLength;
     const level = dcOk ? u[(d.dc + 0x1C) >> 2] : 0;
     const gain = dcOk ? u[(d.dc + 0x20) >> 2] : 0;
     const prevLevel = driftLevel, prevGain = driftGain;
+    const total = d.total;
+    const totalUp = total - driftTotalSeen;
+    driftTotalSeen = total;
     const keepLevel = () => {
       if (!dcOk || prevLevel < 1 || prevLevel > 5 || level >= prevLevel) return;
       u[(d.dc + 0x1C) >> 2] = prevLevel;
@@ -450,21 +473,32 @@
         driftGain = gain;
       }
     };
-    if (d.state === 4) {
-      // a wall took the drift: put its points back and keep counting
-      const keep = Math.max(driftPrev, d.pend);
-      if (keep > 0) {
-        f32[(d.st + 0x24) >> 2] = keep;
-        u[(d.st + 0x14) >> 2] = 0;
-        driftPrev = keep;
-        driftLostAt = now;
+    const restore = (keep, undoBank) => {
+      if (!(keep > 0)) return false;
+      if (undoBank && totalUp > 0 && Math.abs(totalUp - keep) <= 2) {
+        f32[(d.st + 0x2C) >> 2] = total - totalUp;
+        driftTotalSeen = total - totalUp;
       }
+      f32[(d.st + 0x24) >> 2] = keep;
+      u[(d.st + 0x14) >> 2] = 0;
+      driftPrev = keep;
+      driftLostAt = now;
       keepLevel();
       if (level >= prevLevel) trackLevel();
+      return true;
+    };
+    if (d.state === 4) {
+      // a wall took the drift: put its points back and keep counting
+      restore(Math.max(driftPrev, d.pend), true);
       return;
     }
     if (d.state === 3) {
-      // the game banked it; let the bank stand
+      // a normal bank stands. A crash can bank the points before the next
+      // tick; undo that bank so the streak stays in the pending counter.
+      if (recentBankCrash && driftPrev > 0) {
+        restore(driftPrev, true);
+        return;
+      }
       trackLevel();
       driftPrev = 0;
       driftLostAt = 0;
@@ -473,11 +507,7 @@
     if (d.state === 0 || d.state === 1) {
       if (driftPrev > 0 && d.pend + 1 < driftPrev) {
         // the game reset the drift between two ticks (a crash): restore it
-        f32[(d.st + 0x24) >> 2] = driftPrev;
-        u[(d.st + 0x14) >> 2] = 0;
-        keepLevel();
-        if (level >= prevLevel) trackLevel();
-        driftLostAt = now;
+        restore(driftPrev, true);
       } else {
         if (d.pend > 0) driftPrev = d.pend;
         trackLevel();
@@ -492,14 +522,10 @@
       }
       return;
     }
-    if (d.state === 2 && driftPrev > 0 && now - driftLostAt < 1500) {
+    if (d.state === 2 && driftPrev > 0 && recentCrash) {
       // a crash can go 4 -> 2 before the next tick; keep the points and the
       // multiplier through a wall scrape
-      f32[(d.st + 0x24) >> 2] = driftPrev;
-      u[(d.st + 0x14) >> 2] = 0;
-      keepLevel();
-      if (level >= prevLevel) trackLevel();
-      driftLostAt = now;
+      restore(driftPrev, true);
       return;
     }
     trackLevel();
@@ -1187,6 +1213,7 @@
   const act = name => {
     if (name === "help") {
       helpOn = !helpOn;
+      if (uiHidden) return;
       if (helpOn) show(help);
       else hide(help);
       return;
@@ -1256,6 +1283,13 @@
 
     if (name === "panel") {
       setPanel(!panelOn);
+      return;
+    }
+
+    if (name === "shot") {
+      setUiHidden(!uiHidden);
+      if (uiHidden) console.log("[NOS] UI hidden");
+      else toast("UI visible");
       return;
     }
 
@@ -1632,6 +1666,7 @@
     resetKeys.blur();
   });
   mkRow(gKeys, "TRAINER PANEL", "panel", { bind: "panel" });
+  mkRow(gKeys, "HIDE UI (SCREENSHOT)", "shot", { bind: "shot" });
   gKeys.appendChild(resetKeys);
 
   const foot = document.createElement("div");
@@ -1664,14 +1699,38 @@
     panelOn = on;
     if (on) {
       hide(tab);
-      show(panel);
+      if (!uiHidden) show(panel);
       place(panel);
       clampPanel();
       paint(performance.now(), true);
     } else {
       hide(panel);
-      show(tab);
-      place(tab);
+      if (!uiHidden) {
+        show(tab);
+        place(tab);
+      }
+    }
+  };
+
+  // Hide every trainer element for a clean screenshot. The game's own HUD is
+  // left alone. Pressing the key again puts the panel or tab back as it was.
+  const setUiHidden = on => {
+    if (on === uiHidden) return;
+    uiHidden = on;
+    if (on) {
+      hide(panel);
+      hide(tab);
+      hide(help);
+      hide(hud);
+      clearTimeout(hudTimer);
+    } else {
+      if (helpOn) show(help);
+      if (panelOn) setPanel(true);
+      else {
+        hide(panel);
+        show(tab);
+        place(tab);
+      }
     }
   };
 
