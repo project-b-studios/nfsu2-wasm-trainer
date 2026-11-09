@@ -21,7 +21,7 @@ Trainer for **nfsu2.xyz**. It hooks `WebAssembly.Memory` before the game starts 
 - **Jump:** adds upward velocity. Power is adjustable from 6 to 60.
 - **Hard stop / stop lock:** zeroes the car's velocity. Stop lock also holds the position and orientation; it uses a deadband and pins the render body so the camera does not shake.
 - **Position save / load:** stores the position, centre of mass and orientation, plus the game's own copies of them, and restores them for 250 ms.
-- **Drift:** the game's own **X** toggle in free roam. The trainer keeps the pending streak through wall hits and banks 1,000,000 points at a time. It does not force the drift switch in races or outruns; the game's style-points branch then uses a stale pointer and the WASM build crashes. For races, the panel has **DRIFT ASSIST (ALL MODES)**, which lowers the rear wheels' grip so the car slides. It does not show the game's drift score or drift camera outside free roam.
+- **Drift:** the game's own **X** toggle in free roam. The trainer keeps the pending points and the multiplier through wall hits and banks 1,000,000 points at a time. It does not force the drift switch in races or outruns; the game's style-points branch then uses a stale pointer and the WASM build crashes. Outside free roam, **X** toggles **DRIFT ASSIST (ALL MODES)**, which lowers the rear wheels' grip so the car slides in races. The assist stays on through wall hits. It does not show the game's drift score or drift camera outside free roam.
 - **Anti-flip:** keeps the car from staying upside down after a high-speed wall hit. It turns the car back towards the world's up and damps the spin that keeps it over. On by default; the panel has an **ANTI-FLIP** toggle.
 - **Low gravity:** reduces downward velocity while falling.
 - **Spin:** holds the car at its current position and turns it around the world's vertical axis.
@@ -62,7 +62,7 @@ These are the defaults. Click a key badge in the panel to rebind any action. Bin
 
 **No Insert key?** Click the **☰ TRAINER** tab, click the **TRAINER PANEL** key badge, and press another key.
 
-**X** is the game's drift toggle in free roam. Outside free roam the trainer swallows **X** so the game does not show its "Drift mode only works in free roam" message. The trainer does not force drift in races.
+**X** is the game's drift toggle in free roam. Outside free roam, **X** toggles **DRIFT ASSIST (ALL MODES)** instead of showing the game's "Drift mode only works in free roam" message. The trainer does not force the game's drift switch in races, because that crashes the WASM build.
 
 ### Gamepad
 
@@ -108,7 +108,7 @@ The game's own **O** hood/trunk/door cycle is not automated by the trainer. Send
 
 ### Drift assist and anti-flip
 
-**DRIFT ASSIST (ALL MODES)** lowers the rear wheels' grip factor, the same field the game's drift handling changes. The car slides in races and free roam. It does not show the game's drift score or switch to the drift camera outside free roam, because forcing the game's drift switch in a race crashes the WASM build. Toggle it off to put the rear grip back.
+**DRIFT ASSIST (ALL MODES)** lowers the rear wheels' grip factor, the same field the game's drift handling changes. The car slides in races and free roam. Press **X** outside free roam to toggle it, or click its panel row. It keeps the lower grip through wall hits, so a scrape does not turn the assist off. It does not show the game's drift score or switch to the drift camera outside free roam, because forcing the game's drift switch in a race crashes the WASM build. Toggle it off to put the rear grip back.
 
 **ANTI-FLIP** is on by default. When a wall hit turns the car past about 57 degrees, it turns the car back towards the world's up and damps the spin that keeps it over. It is skipped while spin, barrel roll or stop lock is active. Toggle it off if you want the game's full crash physics.
 
@@ -122,7 +122,7 @@ Open the panel in career mode. **ADD $100,000** and **ADD $1,000,000** write the
 
 - **About 1 second freeze the first time NOS kicks in:** the game is loading the NOS effect and streaming map assets. Lower the boost power with **-** if it bothers you.
 - **Trainer does nothing:** it was injected after the game started. Reload the page and inject it again before pressing Play.
-- **Drift mode in races:** the game's own drift mode is free roam only. The trainer does not force its switch in races because that crashes the game's WASM build. Use **DRIFT ASSIST (ALL MODES)** in the panel for sliding in races.
+- **Drift mode in races:** the game's own drift mode is free roam only. The trainer does not force its switch in races because that crashes the game's WASM build. Press **X** outside free roam, or click **DRIFT ASSIST (ALL MODES)** in the panel, for sliding in races. It stays on through wall hits.
 - **Car flips over after a wall hit:** **ANTI-FLIP** is on by default and should right it. If it still happens, note the car, speed and wall, and turn the toggle off and on once to confirm the state.
 - **Pressing X in a race still shows the drift message:** an older `trainer.js` is loaded. Reload the page and inject this build before Play.
 - **No Insert key / panel will not open:** click the **☰ TRAINER** tab, then rebind **TRAINER PANEL** to another key.
@@ -140,8 +140,7 @@ No. The trainer runs in your browser and only changes the game's local memory. T
 ### v1.1
 
 - **Fixed for the 2026-11-03 split-screen update.** The web build moved `PlayersByNumber[0]` from `0x008900AC` to `0x00D00000`. The trainer detects either address and checks the pointer chain.
-- **Drift stays in free roam.** **X** is the game's own toggle. The trainer keeps the pending streak through wall hits and banks 1,000,000 points at a time. Outside free roam, **X** is swallowed so the game does not show its drift message. Forcing the switch in a race makes the style-points branch use a stale pointer and crash.
-- **Drift assist added.** **DRIFT ASSIST (ALL MODES)** lowers the rear wheels' grip factor so the car slides in races too. It does not use the game's drift switch, so it has no drift score or drift camera outside free roam.
+- **Drift in every mode.** In free roam, **X** is the game's own toggle; the trainer keeps the pending points and the multiplier through wall hits and banks 1,000,000 points at a time. Outside free roam, **X** toggles **DRIFT ASSIST (ALL MODES)**, which lowers the rear wheels' grip factor so the car slides in races too. The assist stays on through wall hits. Forcing the game's drift switch in a race makes the style-points branch use a stale pointer and crash, so the trainer never does that; the assist has no drift score or drift camera outside free roam.
 - **Anti-flip added.** A high-speed wall hit no longer leaves the car upside down. The car is turned back towards the world's up and the spin is damped. On by default, with a panel toggle.
 - **Stop lock no longer shakes the camera.** It uses a 5 mm position deadband, a 0.8-degree orientation deadband, and pins the render body's position and orientation.
 - **Spin and barrel roll share one held pose.** Spin turns around the world's vertical axis; barrel roll turns around the car's forward axis. With both on, spin is applied first and the roll follows the new forward axis.

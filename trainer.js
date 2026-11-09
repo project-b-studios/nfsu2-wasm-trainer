@@ -27,7 +27,8 @@
   let synthKeys = 0;
   let jumpPower = 8, panelOn = false;
   let paintAt = 0;
-  let driftPrev = 0, driftBankAt = 0, driftLostAt = 0, driftNoteAt = 0;
+  let driftPrev = 0, driftBankAt = 0, driftLostAt = 0;
+  let driftLevel = 0, driftGain = 0;
 
   // The game's quick chat uses 1-4 (twice) in free roam, so the trainer's
   // defaults stay on 5-0. Every action can be rebound from the panel.
@@ -155,7 +156,7 @@
     "",
     "GAME",
     "  1-4 twice  quick chat in free roam (left to the game)",
-    "  X  drift: the game's own toggle in free roam (only there)",
+    "  X  drift: the game's own toggle in free roam; drift assist elsewhere",
     "",
     "CAREER (panel buttons)",
     "  add money, open the 5 base garage slots, unlock bonus parts",
@@ -425,8 +426,30 @@
     // the switch; writing G_FORCEDRIFT outside the game's drift mode makes the
     // style-points branch use a stale pointer and the WASM build crashes.
     const d = driftInfo(car);
-    if (!d || !d.on || !d.st) { driftPrev = 0; driftLostAt = 0; return; }
+    if (!d || !d.on || !d.st) {
+      driftPrev = 0;
+      driftLostAt = 0;
+      driftLevel = 0;
+      driftGain = 0;
+      return;
+    }
     const now = performance.now();
+    // Keep the multiplier across a wall hit too, not just the pending points.
+    const dcOk = d.dc && !(d.dc & 3) && d.dc + 0x24 <= buf.byteLength;
+    const level = dcOk ? u[(d.dc + 0x1C) >> 2] : 0;
+    const gain = dcOk ? u[(d.dc + 0x20) >> 2] : 0;
+    const prevLevel = driftLevel, prevGain = driftGain;
+    const keepLevel = () => {
+      if (!dcOk || prevLevel < 1 || prevLevel > 5 || level >= prevLevel) return;
+      u[(d.dc + 0x1C) >> 2] = prevLevel;
+      if (prevGain > 0) u[(d.dc + 0x20) >> 2] = prevGain;
+    };
+    const trackLevel = () => {
+      if (level >= 1 && level <= 5) {
+        driftLevel = level;
+        driftGain = gain;
+      }
+    };
     if (d.state === 4) {
       // a wall took the drift: put its points back and keep counting
       const keep = Math.max(driftPrev, d.pend);
@@ -436,10 +459,13 @@
         driftPrev = keep;
         driftLostAt = now;
       }
+      keepLevel();
+      if (level >= prevLevel) trackLevel();
       return;
     }
     if (d.state === 3) {
       // the game banked it; let the bank stand
+      trackLevel();
       driftPrev = 0;
       driftLostAt = 0;
       return;
@@ -449,9 +475,12 @@
         // the game reset the drift between two ticks (a crash): restore it
         f32[(d.st + 0x24) >> 2] = driftPrev;
         u[(d.st + 0x14) >> 2] = 0;
+        keepLevel();
+        if (level >= prevLevel) trackLevel();
         driftLostAt = now;
-      } else if (d.pend > 0) {
-        driftPrev = d.pend;
+      } else {
+        if (d.pend > 0) driftPrev = d.pend;
+        trackLevel();
       }
       if (d.pend >= 1000000 && now >= driftBankAt) {
         const banks = Math.floor(d.pend / 1000000) * 1000000;
@@ -463,13 +492,17 @@
       }
       return;
     }
-    if (d.state === 2 && driftPrev > 0 && now - driftLostAt < 800) {
-      // a crash can go 4 -> 2 before the next tick; keep the points
+    if (d.state === 2 && driftPrev > 0 && now - driftLostAt < 1500) {
+      // a crash can go 4 -> 2 before the next tick; keep the points and the
+      // multiplier through a wall scrape
       f32[(d.st + 0x24) >> 2] = driftPrev;
       u[(d.st + 0x14) >> 2] = 0;
+      keepLevel();
+      if (level >= prevLevel) trackLevel();
       driftLostAt = now;
       return;
     }
+    trackLevel();
     driftPrev = 0;
     driftLostAt = 0;
   };
@@ -1141,6 +1174,16 @@
     paint(performance.now());
   }, 8);
 
+  const setDriftAssist = on => {
+    driftAssistOn = !!on;
+    if (!driftAssistOn) {
+      const g = get();
+      restoreDriftAssist(g ? g.f32 : null);
+    }
+    toast("Drift assist " + (driftAssistOn ? "ON" : "OFF"));
+    paint(performance.now(), true);
+  };
+
   const act = name => {
     if (name === "help") {
       helpOn = !helpOn;
@@ -1157,13 +1200,7 @@
     }
 
     if (name === "driftAssist") {
-      driftAssistOn = !driftAssistOn;
-      if (!driftAssistOn) {
-        const g = get();
-        restoreDriftAssist(g ? g.f32 : null);
-      }
-      toast("Drift assist " + (driftAssistOn ? "ON" : "OFF"));
-      paint(performance.now(), true);
+      setDriftAssist(!driftAssistOn);
       return;
     }
 
@@ -1539,7 +1576,7 @@
   gDrift.appendChild(driftStat);
   mkRow(gDrift, "DRIFT ASSIST (ALL MODES)", "driftAssist", { state: "OFF" });
   const driftHint = document.createElement("div");
-  driftHint.textContent = "Lowers rear grip so the car slides in races too. No drift score or drift camera outside free roam.";
+  driftHint.textContent = "Lowers rear grip so the car slides in races too. Press X outside free roam to toggle it. No drift score or drift camera outside free roam.";
   driftHint.style.cssText = "color:#5f6a75;font-size:9px;line-height:1.45;padding:2px 2px 0";
   gDrift.appendChild(driftHint);
 
@@ -1700,7 +1737,9 @@
           "  |  total " + Math.round(d.total).toLocaleString("en-US")
         : inFreeRoam()
           ? "free roam: press X for the game's drift"
-          : "drift is free roam only";
+          : driftAssistOn
+            ? "drift assist ON (no score here)"
+            : "press X for drift assist";
       if (document.activeElement !== boostS.r) {
         boostS.r.value = boostKmh;
         boostS.val.textContent = boostS.format(boostKmh);
@@ -1789,18 +1828,15 @@
       return act(bound);
     }
     // X is the game's own drift toggle in free roam. Elsewhere the game would
-    // only show "Drift mode only works in free roam"; swallow it instead.
-    // Never force the drift switch outside free roam: the game's style-points
-    // branch then uses a stale pointer and the WASM build crashes.
+    // only show "Drift mode only works in free roam", so X toggles the safe
+    // grip-based drift assist instead. Never force the game's drift switch
+    // outside free roam: its style-points branch uses a stale pointer and the
+    // WASM build crashes.
     if (code === "KeyX") {
       if (!inWorld() || inFreeRoam()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      const now = performance.now();
-      if (now - driftNoteAt > 2000) {
-        driftNoteAt = now;
-        toast("Drift is free roam only");
-      }
+      setDriftAssist(!driftAssistOn);
       return;
     }
   });
