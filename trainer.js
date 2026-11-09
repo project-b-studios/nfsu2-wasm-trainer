@@ -22,9 +22,8 @@
   let gravOn = false, spinOn = false, barrelOn = false, airState = null;
   let antiFlipOn = true, driftAssistOn = false;
   let driftAssistCar = 0, driftAssistPo = 0, driftAssistSaved = null;
-  let showoffOn = false, showoffPartsAt = 0, showoffSaved = null;
+  let showoffOn = false, showoffSaved = null;
   let hydShowoffOn = false, hydAt = 0, hydStep = 0, hydPrev = null, hydSaved = null, hydEngaged = false;
-  let partsShowoffOn = false;
   let synthKeys = 0;
   let jumpPower = 8, panelOn = false;
   let paintAt = 0;
@@ -151,7 +150,6 @@
     "",
     "PANEL",
     "  HYDRAULIC DANCE  the game's H/J hydraulics (parked; off resets the body)",
-    "  PARTS SHOWOFF  the game's O hood/trunk/doors (parked in free roam)",
     "  ANTI-FLIP  keep the car from staying upside down after a wall hit",
     "  DRIFT ASSIST  lower rear grip in every mode (no drift score/camera)",
     "",
@@ -866,7 +864,6 @@
     }
     showoffSaved = st;
     showoffOn = true;
-    showoffPartsAt = 0;
   };
 
   const stopShowoff = g => {
@@ -939,11 +936,10 @@
   const stopAllShowoff = g => {
     if (showoffOn) stopShowoff(g);
     if (hydShowoffOn) stopHydShowoff(g);
-    partsShowoffOn = false;
   };
 
   const showoffTick = (now, g) => {
-    if (!showoffOn && !hydShowoffOn && !partsShowoffOn) return;
+    if (!showoffOn && !hydShowoffOn) return;
     const { u, f32, u8, c } = g;
     if ((showoffSaved && c !== showoffSaved.car) || (hydSaved && c !== hydSaved.car)) {
       stopAllShowoff(g);
@@ -1005,14 +1001,6 @@
           resetHydraulics(g, false);
         }
       }
-    }
-
-    // The O key cycles the game's own hood/trunk/door showoff while parked in
-    // free roam.
-    if (partsShowoffOn && canKeys && inFreeRoam() && speed <= 1.0 && now >= showoffPartsAt) {
-      synthKey("keydown", "KeyO", "o");
-      synthKey("keyup", "KeyO", "o");
-      showoffPartsAt = now + 2400;
     }
   };
 
@@ -1141,7 +1129,6 @@
       boostKmh,
       showoffOn,
       hydShowoffOn,
-      partsShowoffOn,
       spinOn,
       barrelOn,
       antiFlipOn,
@@ -1259,14 +1246,6 @@
         startHydShowoff(g);
         toast("Hydraulic dance ON (parked, H/J)");
       }
-      paint(performance.now(), true);
-      return;
-    }
-
-    if (name === "partsShowoff") {
-      partsShowoffOn = !partsShowoffOn;
-      if (partsShowoffOn) showoffPartsAt = 0;
-      toast("Parts showoff " + (partsShowoffOn ? "ON (parked, O)" : "OFF"));
       paint(performance.now(), true);
       return;
     }
@@ -1571,12 +1550,11 @@
   const gStunt = section("STUNTS");
   mkRow(gStunt, "SHOWOFF", "showoff", { bind: "showoff", state: "OFF" });
   mkRow(gStunt, "HYDRAULIC DANCE", "hydShowoff", { state: "OFF" });
-  mkRow(gStunt, "PARTS SHOWOFF", "partsShowoff", { state: "OFF" });
   mkRow(gStunt, "BARREL ROLL", "barrel", { bind: "barrel", state: "OFF" });
   mkRow(gStunt, "SPIN", "spin", { bind: "spin", state: "OFF" });
   mkRow(gStunt, "ANTI-FLIP", "antiFlip", { state: "ON" });
   const stuntHint = document.createElement("div");
-  stuntHint.textContent = "Showoff is smoke and flames. Hydraulics and parts are separate because the camera follows the lifted body.";
+  stuntHint.textContent = "Showoff is smoke and flames. Hydraulics are separate because the camera follows the lifted body.";
   stuntHint.style.cssText = "color:#5f6a75;font-size:9px;line-height:1.45;padding:2px 2px 0";
   gStunt.appendChild(stuntHint);
 
@@ -1710,7 +1688,6 @@
       setOn(pbtn.barrel, barrelOn);
       setOn(pbtn.showoff, showoffOn);
       setOn(pbtn.hydShowoff, hydShowoffOn);
-      setOn(pbtn.partsShowoff, partsShowoffOn);
       setOn(pbtn.antiFlip, antiFlipOn);
       setOn(pbtn.driftAssist, driftAssistOn);
       const bank = careerBank();
@@ -1907,7 +1884,6 @@
         else {
           if (showoffOn) stopShowoff(null);
           if (hydShowoffOn) stopHydShowoff(null);
-          partsShowoffOn = false;
         }
       }
       offs.forEach(fn => fn());
