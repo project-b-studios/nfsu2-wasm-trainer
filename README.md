@@ -26,7 +26,7 @@ Trainer for **nfsu2.xyz**. It hooks `WebAssembly.Memory` before the game starts 
 - **Low gravity:** reduces downward velocity while falling.
 - **Spin:** holds the car at its current position and turns it around the world's vertical axis.
 - **Barrel roll:** holds the car at its current position and turns it around its own forward axis. It can run together with spin. Turning it off puts the car back on its wheels, so the camera does not stay tilted.
-- **Showoff:** turns on the game's hydraulics and alternates **H** and **J**, writes tyre slip for the game's smoke effect, pulses the nitrous state for exhaust flames, and cycles the game's own **O** hood/trunk/door showoff while parked in free roam. Hydraulics and the **O** parts need free roam and low speed; the smoke and flames also work outside it.
+- **Showoff:** writes tyre slip for the game's smoke effect and pulses the nitrous state for exhaust flames. It sends no game keys, so it cannot move the camera. The game's hydraulic dance (**H/J**) and hood/trunk/door showoff (**O**) are separate panel toggles, off by default; both need the car parked. Turning the hydraulic dance off zeroes the wheel lift and levels the body, so the camera returns to its normal angle.
 - **Career:** shows the bank and adds $100,000 or $1,000,000. It can open the five base garage slots and set the 32 bonus-part/cover-shoot flags. These buttons work only in career mode.
 - **Rebindable keys:** click a key badge in the panel and press a new key. Bindings are saved in the browser. A key already in use is swapped, and **RESET KEY BINDINGS** restores the defaults. The defaults avoid the game's **1-4** quick-chat keys.
 - **Panel:** compact window at the top-left, hidden by default. Open it with the **☰ TRAINER** tab or the panel key (**Insert** by default). Drag it by the header.
@@ -58,6 +58,8 @@ Trainer for **nfsu2.xyz**. It hooks `WebAssembly.Memory` before the game starts 
 
 These are the defaults. Click a key badge in the panel to rebind any action. Bindings persist in the browser. **P** (pause), **Esc** and **F9** are reserved.
 
+**HYDRAULIC DANCE** and **PARTS SHOWOFF** are panel-only; click their rows in the **STUNTS** section. They have no default key.
+
 **No Insert key?** Click the **☰ TRAINER** tab, click the **TRAINER PANEL** key badge, and press another key.
 
 **X** is the game's drift toggle in free roam. Outside free roam the trainer swallows **X** so the game does not show its "Drift mode only works in free roam" message. The trainer does not force drift in races.
@@ -74,7 +76,7 @@ These are the defaults. Click a key badge in the panel to rebind any action. Bin
 | **D-Pad Left / Right** | Save / load position |
 | **D-Pad Up / Down** | Boost power +/- |
 
-Barrel roll, showoff, anti-flip, drift assist and career are on the panel; they have no default gamepad button.
+Barrel roll, showoff, hydraulic dance, parts showoff, anti-flip, drift assist and career are on the panel; they have no default gamepad button.
 
 ### Panel
 
@@ -98,7 +100,11 @@ The clip shows the install: open nfsu2.xyz, press **F12**, paste `trainer.js` in
 
 ### Showoff
 
-Stop the car in free roam, open the panel, and click **SHOWOFF**. The trainer enables hydraulics for the current car, alternates **H** and **J**, writes tyre slip for smoke, pulses the exhaust flame, and presses **O** to cycle the hood, trunk and doors. Toggle it off to restore the fields it changed. If the car is moving faster than about 10 mph, the hydraulic keys are not sent.
+**SHOWOFF** writes tyre slip for the game's smoke effect and pulses the nitrous state for exhaust flames. It sends no game keys, so it works in every mode and cannot move the camera. Toggle it off to restore the fields it changed.
+
+**HYDRAULIC DANCE** is a separate toggle in the **STUNTS** section. Stop the car, click it, and the trainer alternates **H** and **J** for the game's hydraulics. The game's lift moves the render body the camera follows, so this is off by default. Turning it off, or driving faster than about 10 mph, releases the keys, zeroes the wheel lift and levels the body.
+
+**PARTS SHOWOFF** is the game's own **O** hood/trunk/door cycle. It is a separate toggle, off by default, and needs the car parked in free roam. It only changes the drawing, not the car's physics or camera.
 
 ### Drift assist and anti-flip
 
@@ -139,7 +145,7 @@ No. The trainer runs in your browser and only changes the game's local memory. T
 - **Anti-flip added.** A high-speed wall hit no longer leaves the car upside down. The car is turned back towards the world's up and the spin is damped. On by default, with a panel toggle.
 - **Stop lock no longer shakes the camera.** It uses a 5 mm position deadband, a 0.8-degree orientation deadband, and pins the render body's position and orientation.
 - **Spin and barrel roll share one held pose.** Spin turns around the world's vertical axis; barrel roll turns around the car's forward axis. With both on, spin is applied first and the roll follows the new forward axis.
-- **Showoff added.** It uses the game's hydraulics, slip-based tyre smoke, nitrous flame and hood/trunk/door showoff.
+- **Showoff added.** It writes slip-based tyre smoke and the nitrous flame. The hydraulic dance and the **O** hood/trunk/door showoff are separate panel toggles, off by default. Turning the hydraulic dance off zeroes the wheel lift and levels the body, so the camera does not stay at a tilted angle.
 - **Career controls added.** Bank display, +$100,000, +$1,000,000, five base garage slots, and the 32 bonus-part/cover-shoot flags.
 - **Rebindable hotkeys.** Click any key badge, press a new key, and the binding is saved. A key already in use swaps with the old one. **RESET KEY BINDINGS** restores the defaults. Defaults avoid **1-4**, and the panel key can be moved off **Insert**.
 - **Panel rebuilt.** Compact top-left layout, draggable header, ON/OFF states, grouped sections, and the **☰ TRAINER** tab. **P** and **F9** are left to the game.

@@ -22,8 +22,9 @@
   let gravOn = false, spinOn = false, barrelOn = false, airState = null;
   let antiFlipOn = true, driftAssistOn = false;
   let driftAssistCar = 0, driftAssistPo = 0, driftAssistSaved = null;
-  let showoffOn = false, showoffAt = 0, showoffStep = 0, showoffPrev = null;
-  let showoffPartsAt = 0, showoffSaved = null;
+  let showoffOn = false, showoffPartsAt = 0, showoffSaved = null;
+  let hydShowoffOn = false, hydAt = 0, hydStep = 0, hydPrev = null, hydSaved = null, hydEngaged = false;
+  let partsShowoffOn = false;
   let synthKeys = 0;
   let jumpPower = 8, panelOn = false;
   let paintAt = 0;
@@ -144,11 +145,13 @@
     "  " + codeLabel(BINDS.panel) + "  show/hide panel",
     "  " + codeLabel(BINDS.spin) + "  spin on/off",
     "  " + codeLabel(BINDS.barrel) + "  barrel roll on/off",
-    "  " + codeLabel(BINDS.showoff) + "  showoff on/off (hydraulics, smoke, flames)",
+    "  " + codeLabel(BINDS.showoff) + "  showoff on/off (smoke, flames)",
     "  " + codeLabel(BINDS.help) + "  show/hide this help",
     "  hold Alt  keep NOS active",
     "",
     "PANEL",
+    "  HYDRAULIC DANCE  the game's H/J hydraulics (parked; off resets the body)",
+    "  PARTS SHOWOFF  the game's O hood/trunk/doors (parked in free roam)",
     "  ANTI-FLIP  keep the car from staying upside down after a wall hit",
     "  DRIFT ASSIST  lower rear grip in every mode (no drift score/camera)",
     "",
@@ -840,13 +843,13 @@
     }
   };
 
+  // Showoff is memory-only: tyre smoke and exhaust flames. It sends no keys,
+  // so it cannot move the game's camera.
   const startShowoff = g => {
     const { u, f32, u8, c } = g;
     if (showoffSaved) stopShowoff(g);
     const st = {
       car: c,
-      hydLevel: u[G_HYD_LEVEL >> 2],
-      hydOn: u8[G_HYD_ON],
       slip: [],
       ground: [],
       surf: [],
@@ -862,31 +865,15 @@
       st.surf.push(u[(c + CAR_SURF + 4 * i) >> 2]);
     }
     showoffSaved = st;
-    u[G_HYD_LEVEL >> 2] = 2;
-    u8[G_HYD_ON] = 1;
     showoffOn = true;
-    showoffAt = 0;
-    showoffStep = 0;
     showoffPartsAt = 0;
-    if (showoffPrev) {
-      synthKey("keyup", showoffPrev.code, showoffPrev.key);
-      showoffPrev = null;
-    }
   };
 
   const stopShowoff = g => {
-    if (showoffPrev) {
-      synthKey("keyup", showoffPrev.code, showoffPrev.key);
-      showoffPrev = null;
-    }
     showoffOn = false;
     const st = showoffSaved;
     showoffSaved = null;
     if (!st) return;
-    if (u && u8) {
-      u[G_HYD_LEVEL >> 2] = st.hydLevel;
-      u8[G_HYD_ON] = st.hydOn;
-    }
     if (!g || !u || !f32 || !u8 || g.c !== st.car) return;
     const c = g.c;
     for (let i = 0; i < 8; i++) f32[(c + CAR_SLIP + 4 * i) >> 2] = st.slip[i] || 0;
@@ -899,59 +886,133 @@
     u[(c + CAR_NOS + 0x420) >> 2] = 0;
   };
 
+  // The game's hydraulics lift the car's render body, and the chase camera
+  // follows that body. If the hydraulics are cut while the body is lifted or
+  // tilted, the screen can stay at that angle. Zeroing the wheel hydraulics
+  // and leveling the body puts the camera back.
+  const resetHydraulics = (g, level) => {
+    if (!g) return;
+    const { u, f32, c } = g;
+    if (u[(c + 0x28) >> 2] === 1) {
+      const po = u[(c + 0x34) >> 2] >>> 0;
+      if (po && po + 0x84 <= buf.byteLength) {
+        for (let k = 0; k < 4; k++) u[(po + 0x74 + 4 * k) >> 2] = 0;
+      }
+    }
+    if (level) levelCar(f32, c, rbOf(u, c));
+  };
+
+  const startHydShowoff = g => {
+    if (hydSaved) return;
+    const { u, u8, c } = g;
+    hydSaved = { car: c, hydLevel: u[G_HYD_LEVEL >> 2], hydOn: u8[G_HYD_ON] };
+    u[G_HYD_LEVEL >> 2] = 2;
+    u8[G_HYD_ON] = 1;
+    hydShowoffOn = true;
+    hydAt = 0;
+    hydStep = 0;
+    hydEngaged = false;
+    if (hydPrev) {
+      synthKey("keyup", hydPrev.code, hydPrev.key);
+      hydPrev = null;
+    }
+  };
+
+  const stopHydShowoff = g => {
+    if (hydPrev) {
+      synthKey("keyup", hydPrev.code, hydPrev.key);
+      hydPrev = null;
+    }
+    hydShowoffOn = false;
+    hydEngaged = false;
+    const st = hydSaved;
+    hydSaved = null;
+    if (st && u && u8) {
+      u[G_HYD_LEVEL >> 2] = st.hydLevel;
+      u8[G_HYD_ON] = st.hydOn;
+    }
+    // Only touch the car the hydraulics were started on. A car change means
+    // the old body is gone and the new one is already where the game put it.
+    if (st && g && g.c === st.car) resetHydraulics(g, true);
+  };
+
+  const stopAllShowoff = g => {
+    if (showoffOn) stopShowoff(g);
+    if (hydShowoffOn) stopHydShowoff(g);
+    partsShowoffOn = false;
+  };
+
   const showoffTick = (now, g) => {
-    if (!showoffOn || !showoffSaved) return;
+    if (!showoffOn && !hydShowoffOn && !partsShowoffOn) return;
     const { u, f32, u8, c } = g;
-    if (c !== showoffSaved.car) {
-      stopShowoff(g);
+    if ((showoffSaved && c !== showoffSaved.car) || (hydSaved && c !== hydSaved.car)) {
+      stopAllShowoff(g);
       return;
     }
     const speed = speedOf(u, f32, c);
-    // Tyre smoke: the game's effects update reads CAR_SLIP every frame. Only
-    // write it while the car is nearly stopped, so a moving car's handling is
-    // never touched.
-    if (speed <= 3.0) {
-      for (let i = 0; i < 4; i++) {
-        f32[(c + CAR_SLIP + 8 * i) >> 2] = 6.5;
-        f32[(c + CAR_SLIP + 8 * i + 4) >> 2] = 2.0;
-        u8[c + CAR_GROUND + i] = 1;
-        u[(c + CAR_SURF + 4 * i) >> 2] = 0;
+    if (showoffOn) {
+      // Tyre smoke: the game's effects update reads CAR_SLIP every frame. Only
+      // write it while the car is nearly stopped, so a moving car's handling is
+      // never touched.
+      if (speed <= 3.0) {
+        for (let i = 0; i < 4; i++) {
+          f32[(c + CAR_SLIP + 8 * i) >> 2] = 6.5;
+          f32[(c + CAR_SLIP + 8 * i + 4) >> 2] = 2.0;
+          u8[c + CAR_GROUND + i] = 1;
+          u[(c + CAR_SURF + 4 * i) >> 2] = 0;
+        }
+      }
+      // Exhaust flame: pulse the nitrous state unless the player is already
+      // using NOS, in which case leave it on.
+      const tick = u[0x86518C >> 2];
+      if (boostOn || held || (now % 600) < 380) {
+        u[(c + CAR_NOS + 0x414) >> 2] = 40000;
+        u[(c + CAR_NOS + 0x41C) >> 2] = 40000;
+        u[(c + CAR_NOS + 0x420) >> 2] = tick || 1;
+      } else {
+        u[(c + CAR_NOS + 0x420) >> 2] = 0;
       }
     }
-    // Exhaust flame: pulse the nitrous state unless the player is already
-    // using NOS, in which case leave it on.
-    const tick = u[0x86518C >> 2];
-    if (boostOn || held || (now % 600) < 380) {
-      u[(c + CAR_NOS + 0x414) >> 2] = 40000;
-      u[(c + CAR_NOS + 0x41C) >> 2] = 40000;
-      u[(c + CAR_NOS + 0x420) >> 2] = tick || 1;
-    } else {
-      u[(c + CAR_NOS + 0x420) >> 2] = 0;
-    }
-    // The game starts hydraulics 0.22 s after H or J if the car is at 10 mph
-    // or less. Hold one, then the other. The O key cycles the game's own
-    // hood/trunk/door showoff while parked in free roam.
+
     const canKeys = inWorld() && !typing() && !rebindAction;
-    const canHyd = canKeys && speed <= 4.4;
-    if (canHyd) {
-      if (now >= showoffAt) {
-        if (showoffPrev) synthKey("keyup", showoffPrev.code, showoffPrev.key);
-        showoffPrev = (showoffStep % 2) === 0
-          ? { code: "KeyH", key: "h" }
-          : { code: "KeyJ", key: "j" };
-        synthKey("keydown", showoffPrev.code, showoffPrev.key);
-        showoffAt = now + 900;
-        showoffStep++;
+
+    // Hydraulic dance: the game starts hydraulics 0.22 s after H or J if the
+    // car is at 10 mph or less. Hold one, then the other. This is separate
+    // from showoff because the lift moves the camera.
+    if (hydShowoffOn) {
+      const canHyd = canKeys && speed <= 4.4;
+      if (canHyd) {
+        hydEngaged = true;
+        if (now >= hydAt) {
+          if (hydPrev) synthKey("keyup", hydPrev.code, hydPrev.key);
+          hydPrev = (hydStep % 2) === 0
+            ? { code: "KeyH", key: "h" }
+            : { code: "KeyJ", key: "j" };
+          synthKey("keydown", hydPrev.code, hydPrev.key);
+          hydAt = now + 900;
+          hydStep++;
+        }
+      } else {
+        if (hydPrev) {
+          synthKey("keyup", hydPrev.code, hydPrev.key);
+          hydPrev = null;
+          hydAt = now + 500;
+        }
+        if (hydEngaged) {
+          // Put the body back on its wheels when the car starts moving, so
+          // the camera is not left at the lifted angle.
+          hydEngaged = false;
+          resetHydraulics(g, false);
+        }
       }
-      if (inFreeRoam() && speed <= 1.0 && now >= showoffPartsAt) {
-        synthKey("keydown", "KeyO", "o");
-        synthKey("keyup", "KeyO", "o");
-        showoffPartsAt = now + 2400;
-      }
-    } else if (showoffPrev) {
-      synthKey("keyup", showoffPrev.code, showoffPrev.key);
-      showoffPrev = null;
-      showoffAt = now + 500;
+    }
+
+    // The O key cycles the game's own hood/trunk/door showoff while parked in
+    // free roam.
+    if (partsShowoffOn && canKeys && inFreeRoam() && speed <= 1.0 && now >= showoffPartsAt) {
+      synthKey("keydown", "KeyO", "o");
+      synthKey("keyup", "KeyO", "o");
+      showoffPartsAt = now + 2400;
     }
   };
 
@@ -1079,6 +1140,8 @@
       boostOn,
       boostKmh,
       showoffOn,
+      hydShowoffOn,
+      partsShowoffOn,
       spinOn,
       barrelOn,
       antiFlipOn,
@@ -1182,8 +1245,28 @@
         toast("Showoff OFF");
       } else {
         startShowoff(g);
-        toast("Showoff ON (parked: hydraulics, smoke, flames)");
+        toast("Showoff ON (smoke, flames)");
       }
+      paint(performance.now(), true);
+      return;
+    }
+
+    if (name === "hydShowoff") {
+      if (hydShowoffOn) {
+        stopHydShowoff(g);
+        toast("Hydraulic dance OFF");
+      } else {
+        startHydShowoff(g);
+        toast("Hydraulic dance ON (parked, H/J)");
+      }
+      paint(performance.now(), true);
+      return;
+    }
+
+    if (name === "partsShowoff") {
+      partsShowoffOn = !partsShowoffOn;
+      if (partsShowoffOn) showoffPartsAt = 0;
+      toast("Parts showoff " + (partsShowoffOn ? "ON (parked, O)" : "OFF"));
       paint(performance.now(), true);
       return;
     }
@@ -1487,9 +1570,15 @@
 
   const gStunt = section("STUNTS");
   mkRow(gStunt, "SHOWOFF", "showoff", { bind: "showoff", state: "OFF" });
+  mkRow(gStunt, "HYDRAULIC DANCE", "hydShowoff", { state: "OFF" });
+  mkRow(gStunt, "PARTS SHOWOFF", "partsShowoff", { state: "OFF" });
   mkRow(gStunt, "BARREL ROLL", "barrel", { bind: "barrel", state: "OFF" });
   mkRow(gStunt, "SPIN", "spin", { bind: "spin", state: "OFF" });
   mkRow(gStunt, "ANTI-FLIP", "antiFlip", { state: "ON" });
+  const stuntHint = document.createElement("div");
+  stuntHint.textContent = "Showoff is smoke and flames. Hydraulics and parts are separate because the camera follows the lifted body.";
+  stuntHint.style.cssText = "color:#5f6a75;font-size:9px;line-height:1.45;padding:2px 2px 0";
+  gStunt.appendChild(stuntHint);
 
   const gCareer = section("CAREER");
   const careerStat = document.createElement("div");
@@ -1620,6 +1709,8 @@
       setOn(pbtn.spin, spinOn);
       setOn(pbtn.barrel, barrelOn);
       setOn(pbtn.showoff, showoffOn);
+      setOn(pbtn.hydShowoff, hydShowoffOn);
+      setOn(pbtn.partsShowoff, partsShowoffOn);
       setOn(pbtn.antiFlip, antiFlipOn);
       setOn(pbtn.driftAssist, driftAssistOn);
       const bank = careerBank();
@@ -1810,10 +1901,14 @@
       clearInterval(iv);
       clearInterval(padIv);
       clearTimeout(hudTimer);
-      if (showoffOn) {
+      {
         const g = get();
-        if (g) stopShowoff(g);
-        else stopShowoff(null);
+        if (g) stopAllShowoff(g);
+        else {
+          if (showoffOn) stopShowoff(null);
+          if (hydShowoffOn) stopHydShowoff(null);
+          partsShowoffOn = false;
+        }
       }
       offs.forEach(fn => fn());
       hud.remove();
