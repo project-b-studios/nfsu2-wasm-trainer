@@ -299,6 +299,7 @@
   const G_FLOW = 0x008654A4, G_RACEKIND = 0x0089E7B0;
   const G_CAREER_RACE = 0x00863470, G_GAMEMODE = 0x00850078;
   const G_RACEFLAGS = 0x0089E7D8; // byte +1 is G_DRIFTRACE
+  const G_DRIFTRACE = 0x0089E7D9; // byte: a drift event, including a network drift race
 
   // Career and garage fields, checked against the web build's career.c and
   // garage.c. The bank is a u32; the garage's first five slots sit at
@@ -326,6 +327,12 @@
   };
 
   const inCareer = () => !!(u && (u[G_GAMEMODE >> 2] & 1) !== 0);
+
+  // A drift event (career or network) runs the same style-points system as
+  // free roam's X mode. The trainer must not write G_FORCEDRIFT here, but the
+  // racer's DriftScore and its styles are live, so keeping the pending points
+  // through a wall hit is safe.
+  const inDriftRace = () => !!(u8 && buf && G_DRIFTRACE + 1 <= buf.byteLength && u8[G_DRIFTRACE]);
 
   const careerBank = () => {
     if (!u || !buf || !inCareer()) return null;
@@ -410,7 +417,12 @@
         }
       }
     }
-    if (!rc) rc = u[(r + 0xBD0) >> 2];
+    if (!rc) {
+      // In a drift event never touch another racer's score when the player's
+      // car is not in the list yet (loading, respawn).
+      if (inDriftRace()) return { ...none, on };
+      rc = u[(r + 0xBD0) >> 2];
+    }
     if (!rc || (rc & 3) || rc + 0x1DC > buf.byteLength) return { ...none, on };
     const ds = u[(rc + 0x1D4) >> 2], dc = u[(rc + 0x1D8) >> 2];
     if (!ds || (ds & 3) || ds + 4 > buf.byteLength) return { ...none, on };
@@ -433,6 +445,7 @@
     // style-points branch use a stale pointer and the WASM build crashes.
     const d = driftInfo(car);
     const now = performance.now();
+    const raceDrift = inDriftRace();
     // The car's crash mark (car + 0x38) is set by the game's physics on a wall
     // hit. While it is set, the game can zero the pending points and the
     // multiplier; the trainer keeps them and undoes a crash bank.
@@ -443,7 +456,7 @@
     if (crashed || (d && d.state === 4)) driftCrashAt = now;
     const recentCrash = crashed || (driftCrashAt > 0 && now - driftCrashAt < 1500);
     const recentBankCrash = crashed || (driftCrashAt > 0 && now - driftCrashAt < 600);
-    if (!d || !d.on || !d.st) {
+    if (!d || !(d.on || raceDrift) || !d.st) {
       // A crash can null the style pointer for a frame or two. Keep the last
       // points for the grace window so they can go into the new style.
       if (recentCrash && driftPrev > 0) return;
@@ -512,7 +525,9 @@
         if (d.pend > 0) driftPrev = d.pend;
         trackLevel();
       }
-      if (d.pend >= 1000000 && now >= driftBankAt) {
+      // Only free roam's switch gets the trainer's 1,000,000-point bank. In a
+      // drift event the game's own bank decides the race score.
+      if (d.on && d.pend >= 1000000 && now >= driftBankAt) {
         const banks = Math.floor(d.pend / 1000000) * 1000000;
         driftBankAt = now + 1000;
         f32[(d.st + 0x2C) >> 2] = d.total + banks;
